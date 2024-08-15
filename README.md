@@ -1,0 +1,2 @@
+# dnscli
+Simple DNS client
