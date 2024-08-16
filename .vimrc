@@ -8,7 +8,8 @@ endfunction
 
 function! RunProgram()
     execute 'terminal'
-    call feedkeys("./bin/Debug/dnscli www.amazon.com 8.8.8.8\<CR>")
+    resize +20
+    call feedkeys("./bin/Debug/dnscli -m\<CR>")
 endfunction
 
 function! ChangePrevCommit()

@@ -1,8 +1,5 @@
-#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <pthread.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -22,15 +19,6 @@ void usage(const char *progname) {
     fprintf(stderr, "Example 2: %s www.example.com 8.8.8.8\n", progname);
 }
 
-void *worker(void *arg) {
-    printf("arg: %s\n", (char*)arg);
-    for (int i=0; i<5; i++) {
-        sleep(1);
-        printf("waiting... %d\n", i);
-    }
-    return NULL;
-}
-
 int main(int argc, char *argv[]) {
     int opt;
     char flags = 0;
@@ -48,7 +36,7 @@ int main(int argc, char *argv[]) {
     }
     
     if ((flags & (1 << 0)) == 1) {
-        startMonitor();
+        startMonitor(parseDnsResponse);
         return EXIT_SUCCESS;
     }
 
@@ -63,12 +51,6 @@ int main(int argc, char *argv[]) {
 
     int rc = 0;
     rc = sendMsg(dns, port, buildDnsQuery, (void*)name, parseDnsResponse);
-    /*
-    unsigned long thread_id = 0;
-    rc = pthread_create(&thread_id, NULL, worker, (void*)"thread test");
-
-    pthread_join(thread_id, NULL);
-    */
     return rc;
 }
 
