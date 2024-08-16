@@ -62,7 +62,7 @@ do {                                     \
     }                                    \
 } while(0)
 
-void buildDnsQuery(const char *name, char *buffer, int *buflen);
+void buildDnsQuery(void *arg, char *buffer, int *buflen);
 int parseDnsResponse(char *buf, int buflen);
 void parseAddr(char *buffer, int *pos);
 void parseAnswer(char *buffer, int *pos);

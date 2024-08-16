@@ -3,12 +3,12 @@ function! RunCMake()
   call feedkeys("cd ./build/Debug\<CR>")
   call feedkeys("cmake -DCMAKE_BUILD_TYPE=Debug ../..\<CR>")
   call feedkeys("cmake --build .\<CR>")
-  call feedkeys("exit\<CR>")
+  "call feedkeys("exit\<CR>")
 endfunction
 
 function! RunProgram()
     execute 'terminal'
-    call feedkeys("./bin/Debug/dnscli www.amazon.com\<CR>")
+    call feedkeys("./bin/Debug/dnscli www.amazon.com 8.8.8.8\<CR>")
 endfunction
 
 function! ChangePrevCommit()

@@ -1,6 +1,7 @@
 #include "dns.h"
 
-void buildDnsQuery(const char *name, char *buffer, int *buflen) {
+void buildDnsQuery(void *arg, char *buffer, int *buflen) {
+    char *name = (char*)arg;
     char *query;
     char header[HEADER_SZ] = {0};
     

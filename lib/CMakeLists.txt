@@ -1,4 +1,4 @@
-add_library(dns dns.c)
+add_library(dns dns.c udp.c)
 
 target_include_directories(dns
     INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})
