@@ -1,3 +1,9 @@
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <errno.h>
+
+#include "dns.h"
 #include "udp.h"
 
 int
@@ -50,6 +56,7 @@ sendMsg(const char *srv, const int port,
             }
         } else {
             rc = __parseFunc(buf, n);
+            if (rc < 0) DEBUG_DUMP(buf, n);  
             break;
         }
     } while (timeout > 0);
