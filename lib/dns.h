@@ -7,7 +7,7 @@
 #define MAX_LABEL 63
 #define MAX_DOMAIN_NAME 255
 #define MAX_IPV4_ADDR 16
-
+#define MAX_IPV6_ADDR 39
 // DNS Header structure
 typedef struct {
     uint16_t transactionID;    // Transaction ID
@@ -142,21 +142,25 @@ DNSPacket *createDNSPacket();
 void freeDNSPacket(DNSPacket **dnsPacket);
 
 void buildDnsQuery(void *arg, char *buffer, int *buflen);
-int parseDnsResponse(char *buf, int buflen);
-void parseAddr(char *buffer, int *pos);
-int parseIPv4Addr(char *buffer, uint16_t *pos, char *name);
-int parseSRVRR(char *buffer, uint16_t *pos, char *name);
-void parseAnswer(char *buffer, int *pos);
-void parseQuery(char *buffer, int *pos);
-void parseName(char *buffer, int *pos, const char *prefix);
-int parseDnsPacket(DNSPacket *dnsPacket, char *buf, int n);
-void parseDNSPacketReplyFields(DNSPacket *dnsPacket, char *buf, uint16_t *pos);
+int parseDnsResponse(uint8_t *buf, int buflen);
+void parseAddr(uint8_t *buffer, int *pos);
+int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, char *name);
+int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, char *name);
+int parseSRVRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
+int parseAAAARR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
+int parseTXTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
+void parseAnswer(uint8_t *buffer, int *pos);
+void parseQuery(uint8_t *buffer, int *pos);
+void parseName(uint8_t *buffer, int *pos, const char *prefix);
+int parseDNSName(uint8_t *buf, uint16_t *pos, char *name);
+int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int n);
+void parseDNSPacketReplyFields(DNSPacket *dnsPacket, uint8_t *buf, uint16_t *pos);
 
 int parseDNSPacketQueries(DNSQuestion *dnsQuestions,
-        uint16_t cnt, char *buf, uint16_t *pos);
+        uint16_t cnt, uint8_t *buf, uint16_t *pos);
 
 int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
-        uint16_t cnt, char *buf, uint16_t *pos);
+        uint16_t cnt, uint8_t *buf, uint16_t *pos);
 
 void printDnsPacket(DNSPacket *dnsPacket);
 

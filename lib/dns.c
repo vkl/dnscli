@@ -80,12 +80,42 @@ void freeDNSPacket(DNSPacket *(*dnsPacket)) {
     *dnsPacket = NULL;
 }
 
-int parseSRVRR(char *buf, uint16_t *pos, char *name) {
+int parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+    uint16_t txtLen = 0;
+    uint16_t currPos = 0; 
+    uint16_t dataLen = dnsResourceRecord->dataLength;
+    dnsResourceRecord->data = calloc(1, dataLen + 1);
+    do {
+        txtLen = buf[(*pos)];
+        (*pos)++;
+        strncpy(&dnsResourceRecord->data[currPos], (char*)&buf[(*pos)], txtLen); 
+        dataLen -= (txtLen + 1);
+        (*pos) += txtLen;
+        currPos += txtLen;
+    } while (dataLen > 0);
+    return 1;
+}
+
+int parseSRVRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+    uint16_t priority = (buf[(*pos)] << 8) | buf[(*pos) + 1];
+    uint16_t weight = (buf[(*pos) + 2] << 8) | buf[(*pos) + 3];
+    uint16_t port = (buf[(*pos) + 4] << 8) | buf[(*pos) + 5];
+    (*pos) += 6;
+    char target[MAX_DOMAIN_NAME] = {0};
+    if (parseDNSName(buf, pos, target) < 0)
+        return -1;
+    uint16_t n = snprintf(NULL, 0, "priority: %u, weight: %u, port: %u, target: %s",
+            priority, weight, port, target);
+    dnsResourceRecord->data = calloc(1, n+1);
+    if (!dnsResourceRecord->data)
+        return -1;
+    sprintf(dnsResourceRecord->data, "priority: %u, weight: %u, port: %u, target: %s",
+            priority, weight, port, target);    
 
     return 1;
 }
 
-int parseDNSName(char *buf, uint16_t *pos, char *name) {
+int parseDNSName(uint8_t *buf, uint16_t *pos, char *name) {
     int j = 0;
     int label_len = 0;
     int tmp_pos = *pos;  // Temporary position to track compressed names
@@ -152,7 +182,7 @@ void printDnsPacket(DNSPacket *dnsPacket) {
 
 }
 
-int parseDnsPacket(DNSPacket *dnsPacket, char *buf, int buflen) {
+int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int buflen) {
     
     uint16_t pos = 0;
     
@@ -198,7 +228,7 @@ int parseDnsPacket(DNSPacket *dnsPacket, char *buf, int buflen) {
 }
 
 int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
-        uint16_t cnt, char *buf, uint16_t *pos) {
+        uint16_t cnt, uint8_t *buf, uint16_t *pos) {
 
     char name[MAX_DOMAIN_NAME]; 
 
@@ -239,14 +269,12 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
         }    
         switch (dnsResourceRecord->type) {
             case SRV:
-                //dnsResourceRecord->data = calloc(dnsResourceRecord->dataLength, 1);
-                //if (!dnsResourceRecord->data) {
-                //    return -1;
-                //}
-                //if (!parseSRVRR(buf, pos, dnsResourceRecord->data)) {
-                //    return -1;
-                //}
-                (*pos) += dnsResourceRecord->dataLength;
+                if (!parseSRVRR(buf, pos, dnsResourceRecord))
+                    return -1;
+                break;
+            case TXT:
+                if (!parseTXTRR(buf, pos, dnsResourceRecord))
+                    return -1;
                 break;
             case PTR:
             case CNAME:
@@ -271,11 +299,21 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
                     return -1;
                 }
                 break;
-            //case AAAA:
+            case AAAA:
+                char ipv6[MAX_IPV6_ADDR] = {0};
+                if (!parseIPv6Addr(buf, pos, ipv6)) {
+                    fprintf(stderr, "IPv6 error\n");
+                    return -1;
+                }
+                dnsResourceRecord->data = strdup(ipv6);
+                if (!dnsResourceRecord->data) {
+                    return -1;
+                }
+                break;
             //case TXT:
             default:
                 (*pos) += dnsResourceRecord->dataLength;
-                break;
+                return -1;
         }
     }
 
@@ -283,7 +321,7 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
 }
 
 int parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
-        char *buf, uint16_t *pos) {
+        uint8_t *buf, uint16_t *pos) {
 
     char name[MAX_DOMAIN_NAME]; 
     for (uint16_t i = 0; i < cnt; i++) {
@@ -312,7 +350,7 @@ int parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
     return 1;
 }
 
-int parseDnsResponse(char *buf, int buflen) {
+int parseDnsResponse(uint8_t *buf, int buflen) {
     printf("received %d\n", buflen);
     DNSPacket *dnsPacket = createDNSPacket();
     if (parseDnsPacket(dnsPacket, buf, buflen) < 0)
@@ -322,7 +360,17 @@ int parseDnsResponse(char *buf, int buflen) {
     return 0;
 }
 
-int parseIPv4Addr(char *buffer, uint16_t *pos, char *name) {
+int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, char *name) {
+    int k = 0;                            
+    for (int j=0; j<8; j++) {             
+        k += sprintf(&name[k], "%02x%02x:", buffer[*pos], buffer[(*pos)+1]);
+        (*pos) += 2;                          
+    }                                
+    name[k-1] = 0;
+    return 1;
+}
+
+int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, char *name) {
     int k = 0;                            
     for (int j=0; j<4; j++) {             
         k += sprintf(&name[k], "%d.", (unsigned char)buffer[*pos]);
@@ -330,80 +378,5 @@ int parseIPv4Addr(char *buffer, uint16_t *pos, char *name) {
     }                                
     name[k-1] = 0;
     return 1;
-}
-
-void parseAddr(char *buffer, int *pos) {
-    char ipv4addr[MAX_IPV4_ADDR] = {0};
-    int k = 0;                            
-    for (int j=0; j<4; j++) {             
-        k += sprintf(&ipv4addr[k], "%d.", (unsigned char)buffer[*pos]);
-        (*pos)++;                          
-    }                                
-    (ipv4addr)[k-1] = 0;
-    printf("addr: %s ", ipv4addr);
-}
-
-void parseAnswer(char *buffer, int *pos) {
-    parseName(buffer, pos, "");
-    int type = (buffer[(*pos)] << 8) | buffer[(*pos)+1];
-    DNS_TYPE(type);
-    DNS_CLASS((buffer[(*pos)+2] << 8) | buffer[(*pos+3)]);
-    (*pos) += 4;
-    // Time to Live
-    int ttl = 0;
-    ttl = (buffer[(*pos)] << 24) | (buffer[(*pos) + 1] << 16) \
-          | (buffer[(*pos) + 2] << 8) | buffer[(*pos) + 3];
-    (*pos) += 4;
-    printf(", TTL %d, ", ttl > 0 ? ttl : 0);
-    // Data length
-    unsigned char dataLen = 0;
-    dataLen = (buffer[(*pos)] << 8) | buffer[(*pos) + 1];
-    (*pos) += 2;
-    printf("Data length %d, ", dataLen);
-    switch (type) {
-        case CNAME:
-            parseName(buffer, pos, "cname: ");
-            break;
-        case A:
-            parseAddr(buffer, pos);
-            break;
-    }
-}
-
-void parseQuery(char *buffer, int *pos) {
-    parseName(buffer, pos, "");
-    DNS_TYPE((buffer[(*pos)] << 8) | buffer[(*pos)+1]);
-    DNS_CLASS((buffer[(*pos)+2] << 8) | buffer[(*pos+3)]);
-    (*pos) += 4;
-}
-
-void parseName(char *buffer, int *pos, const char *prefix) {
-    int j = 0;
-    int label_len = 0;
-    int tmp_pos = *pos;  // Temporary position to track compressed names
-    int tmp = 0;         // Store the original position when following a compression pointer
-    char name[MAX_DOMAIN_NAME] = {0};
-
-    while (buffer[tmp_pos] != 0) {
-        // Check for compression pointer (two most significant bits set)
-        if ((buffer[tmp_pos] & 0xC0) == 0xC0) {
-            if (tmp == 0) {
-                tmp = tmp_pos + 2;  // Save the current position to return after the compressed label
-            }
-            tmp_pos = ((buffer[tmp_pos] & 0x3F) << 8) | buffer[tmp_pos + 1];
-        } else {
-            label_len = buffer[tmp_pos];
-            tmp_pos++;
-
-            memcpy(&name[j], &buffer[tmp_pos], label_len);
-            j += label_len;
-            name[j++] = '.';
-            
-            tmp_pos += label_len;
-        }
-    }
-    name[j - 1] = 0;  // Replace the last '.' with a null terminator
-    *pos = tmp > 0 ? tmp : tmp_pos + 1;  // Restore position after name parsing
-    printf("%s%s ", prefix, name);
 }
 

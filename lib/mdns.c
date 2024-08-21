@@ -45,7 +45,7 @@ void *monitor(void *arg) {
         return NULL;
     }
     
-    char *buf = calloc(1, 1024);
+    uint8_t *buf = calloc(1, 1024);
     ssize_t n = 0;
     do {
         n = recv(fd, buf, 1024, 0);
