@@ -8,6 +8,7 @@
 #define MAX_DOMAIN_NAME 255
 #define MAX_IPV4_ADDR 16
 #define MAX_IPV6_ADDR 39
+
 // DNS Header structure
 typedef struct {
     uint16_t transactionID;    // Transaction ID
@@ -58,6 +59,9 @@ typedef enum DNSType {
     TXT = 16,    // text strings
     AAAA = 28,   // a ipv6 host address
     SRV = 33,    // server selection
+    OPT = 41,    // option
+    IXFR = 251,  // Incremental Zone Transfer
+    AXFR = 252,  // Authoritative Zone Transfer
     ANY = 255    // any  
 } DNSType;
 
@@ -82,6 +86,9 @@ typedef enum DNSClass {
     (type) == TXT ? "TXT" : \
     (type) == AAAA ? "AAAA" : \
     (type) == SRV ? "SRV" : \
+    (type) == OPT ? "OPT" : \
+    (type) == IXFR ? "IXFR" : \
+    (type) == AXFR ? "AXFR" : \
     (type) == ANY ? "ANY" : "UNKNOWN")
 
 #define DNS_CLASS_TO_STRING(class) \
@@ -141,11 +148,12 @@ do {                                     \
 DNSPacket *createDNSPacket();
 void freeDNSPacket(DNSPacket **dnsPacket);
 
-void buildDnsQuery(void *arg, char *buffer, int *buflen);
+void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen);
 int parseDnsResponse(uint8_t *buf, int buflen);
 void parseAddr(uint8_t *buffer, int *pos);
-int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, char *name);
-int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, char *name);
+int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
+int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
+int parseOPTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseSRVRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseAAAARR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseTXTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
