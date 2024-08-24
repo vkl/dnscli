@@ -11,7 +11,7 @@
 #include "mdns.h" // startMonitor
 
 void usage(const char *progname) {
-    fprintf(stderr, "Usage: %s [-m] [-q | -r] <domain_name> <dns_server>\n", progname);
+    fprintf(stderr, "Usage: %s [-m] [-q | -r] OR <domain_name> <dns_server>\n", progname);
     fprintf(stderr, "  -m        : Monitor mDNS (requires -a, -q, or -r)\n");
     fprintf(stderr, "  -q        : Show only queries\n");
     fprintf(stderr, "  -r        : Show only replies\n");
