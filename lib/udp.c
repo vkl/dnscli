@@ -6,9 +6,55 @@
 #include "dns.h"
 #include "udp.h"
 
-int
-sendMsg(const char *srv, const int port,
-        buildMsg __buildFunc, void *arg, parseMsg __parseFunc) {
+int 
+sendMulticastDNS(const char *multicast_addr, const int port, uint8_t *buffer, uint16_t buflen) 
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        perror("socket");
+        return -1;
+    }
+    
+    struct sockaddr_in local_addr;
+    memset(&local_addr, 0, sizeof(local_addr));
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_addr.s_addr = htonl(INADDR_ANY);  // Listen on any interface
+    local_addr.sin_port = htons(5353);  // Bind to source port 5353
+
+    if (bind(fd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
+        perror("bind error");
+        close(fd);
+        return -1;
+    }
+
+    int optval = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(optval)) < 0) {
+        perror("setsockopt reuseaddr");
+        close(fd);
+        return -1;
+    }
+
+    struct sockaddr_in multicast_addr_in;
+    memset(&multicast_addr_in, 0, sizeof(multicast_addr_in));
+    multicast_addr_in.sin_family = AF_INET;
+    multicast_addr_in.sin_addr.s_addr = inet_addr(multicast_addr);
+    multicast_addr_in.sin_port = htons(port);
+
+    int rc = sendto(fd, buffer, buflen, 0, (struct sockaddr*)&multicast_addr_in, sizeof(multicast_addr_in));
+    if (rc == -1) {
+        perror("sendto error");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);  // Close the socket after sending
+    return 1;   // Success
+}
+
+int 
+sendMsg(const char *srv, const int port, uint8_t *msg, 
+        uint16_t msgLen, parseMsg __parseFunc) 
+{
 
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd == -1) {
@@ -31,17 +77,16 @@ sendMsg(const char *srv, const int port,
         return -1;
     }
     
-    int buflen = 0;
-    char *buf = calloc(1, BUF_SZ);
-    __buildFunc(arg, buf, &buflen);
     int rc;
-    if ( (rc = write(fd, buf, buflen)) != buflen) {
+    if ( (rc = write(fd, msg, msgLen)) != msgLen) {
         perror("write error");
-        free(buf);
         return -1;
     }
+
+    if (!__parseFunc) return rc;
+
     int timeout = 50; // 50 * 100_000 = 5 sec
-    memset(buf, 0, BUF_SZ);
+    uint8_t *buf = calloc(BUF_SZ, 1);
     do {
         ssize_t n = recv(fd, buf, BUF_SZ, 0);
         if (n < 0) {

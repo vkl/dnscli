@@ -8,10 +8,11 @@ project(dnscli VERSION 1.0)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(ASAN_FLAGS "-fsanitize=address -g")
 
 #option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
 add_subdirectory(lib)
-
+add_definitions(-DDEBUG_TRACE)
 # Compile the passed source files into an executable 
 add_executable(dnscli 
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
