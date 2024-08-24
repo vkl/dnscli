@@ -16,6 +16,8 @@
 #define MDNS_GROUP "224.0.0.251"
 
 void *monitor(void *arg) {
+
+    uint8_t flags = *((uint8_t*)arg);
     
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd == -1) {
@@ -65,14 +67,20 @@ void *monitor(void *arg) {
             break;
         }
         if (arg != NULL) {
-            printf("Received %ld bytes\n", n);
+            //printf("Received %ld bytes\n", n);
             //parseMsg parseDnsResponse = (parseMsg)arg;
             DNSPacket *dnsPacket = createDNSPacket();
             if (parseDnsPacket(dnsPacket, buf, n) < 0) {
                 fprintf(stderr, "error parse DNS packet\n");
                 DEBUG_DUMP(buf, n);
             } else {
-                printDnsPacket(dnsPacket);
+                if (flags == 0x3) {
+                    printDnsPacket(dnsPacket);
+               } else if (flags == 0x5 && IS_QUERY(dnsPacket->header.flags)) {
+                    printDnsPacket(dnsPacket);   
+                } else if (flags == 0x9 && !IS_QUERY(dnsPacket->header.flags)) {
+                    printDnsPacket(dnsPacket); 
+                }
             }
             freeDNSPacket(&dnsPacket);
             //parseDnsResponse(buf, n);
@@ -86,10 +94,10 @@ void *monitor(void *arg) {
     return NULL;
 }
 
-void startMonitor(parseMsg __parseFunc) {
+void startMonitor(parseMsg __parseFunc, uint8_t flags) {
     int rc;
     pthread_t thread_id = 0;
-    rc = pthread_create(&thread_id, NULL, monitor, (void*)__parseFunc);
+    rc = pthread_create(&thread_id, NULL, monitor, (void*)&flags);
     pthread_join(thread_id, NULL);
 }
 
