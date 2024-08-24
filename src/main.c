@@ -10,33 +10,56 @@
 #include "dns.h" // buildDnsQuery, parseDnsResponse
 #include "mdns.h" // startMonitor
 
-void usage(const char *progname) {
-    fprintf(stderr, "Usage: %s [-m] OR <domain_name> <dns_server>\n", progname);
-    fprintf(stderr, "  -m        : Monitor mDNS\n");
+static void
+usage(const char *progname)
+{
+    fprintf(stderr, "Usage: %s [-m] [-q | -r] OR <domain_name> <dns_server>\n", progname);
+    fprintf(stderr, "  -m        : Monitor mDNS (requires -a, -q, or -r)\n");
+    fprintf(stderr, "  -q        : Show only queries\n");
+    fprintf(stderr, "  -r        : Show only replies\n");
     fprintf(stderr, "  <domain_name> : The domain name to query\n");
     fprintf(stderr, "  <dns_server>  : The DNS server to use\n");
     fprintf(stderr, "Example 1: %s -m\n", progname);
-    fprintf(stderr, "Example 2: %s www.example.com 8.8.8.8\n", progname);
+    fprintf(stderr, "Example 2: %s -m -q\n", progname);
+    fprintf(stderr, "Example 3: %s -m -r\n", progname);
+    fprintf(stderr, "Example 4: %s www.example.com 8.8.8.8\n", progname);
 }
 
-int main(int argc, char *argv[]) {
+int
+main(int argc, char *argv[])
+{
     int opt;
     char flags = 0;
-    while((opt = getopt(argc, argv, "mh")) != -1)  
+    char *dnsType = "A";
+    while((opt = getopt(argc, argv, "maqrht:")) != -1)  
     {  
         switch(opt)  
         {  
             case 'm':  
-                flags = (1 << 0);  
+                flags |= 0x1;  
+                break;
+            case 'q':
+                flags |= 0x4; 
+                break;
+            case 'r':
+                flags |= 0x8;
+                break;
+            case 't':
+                dnsType = optarg;
                 break;
             case 'h':
                 usage(argv[0]);
                 return EXIT_SUCCESS;
         }
     }
-    
-    if ((flags & (1 << 0)) == 1) {
-        startMonitor(parseDnsResponse);
+
+    if (flags > 9) {
+        usage(argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if ((flags & 1) == 1) {
+        startMonitor(parseDnsResponse, flags);
         return EXIT_SUCCESS;
     }
 
@@ -45,12 +68,19 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    const char *name = argv[argc - optind - 1];
-    const char *dns = argv[argc - optind];
+    const char *name = argv[argc - 2];
+    const char *dns = argv[argc - 1];
     const int port = 53;
 
     int rc = 0;
-    rc = sendMsg(dns, port, buildDnsQuery, (void*)name, parseDnsResponse);
+    int msgLen = 1024;
+    uint8_t *msg = calloc(msgLen, 1);
+    buildDnsQuery(name, STR_TO_DNS_TYPE(dnsType), &msg, &msgLen);
+#ifdef DEBUG_TRACE
+    DEBUG_DUMP(msg, msgLen);
+#endif
+    rc = sendMsg(dns, port, msg, msgLen, parseDnsResponse);
+    free(msg);
     return rc;
 }
 
