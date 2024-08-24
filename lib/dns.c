@@ -6,7 +6,7 @@
 
 #include "dns.h"
 
-void buildDnsQuery(void *arg, char *buffer, int *buflen) {
+void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen) {
     char *name = (char*)arg;
     char *query;
     char header[HEADER_SZ] = {0};
@@ -93,6 +93,14 @@ int parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord
         (*pos) += txtLen;
         currPos += txtLen;
     } while (dataLen > 0);
+    return 1;
+}
+
+int parseOPTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+    uint16_t dataLen = dnsResourceRecord->dataLength;
+    dnsResourceRecord->data = calloc(dataLen + 1, 1);
+    strncpy(dnsResourceRecord->data, (char*)&buf[(*pos)], dataLen);
+    (*pos) += dataLen;
     return 1;
 }
 
@@ -263,8 +271,9 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
         (*pos) += sizeof(uint16_t);
 
         if (dnsResourceRecord->type == 0 || dnsResourceRecords->class == 0 || 
-                dnsResourceRecord->ttl == 0 || dnsResourceRecords->dataLength == 0) {
-            fprintf(stderr, "attrs error\n");
+                dnsResourceRecords->dataLength == 0) {
+            fprintf(stderr, "type: %d, class: %d, ttl: %d, len: %d, attrs error\n",
+                    dnsResourceRecord->type, dnsResourceRecord->class, dnsResourceRecord->ttl, dnsResourceRecord->dataLength);
             return -1;
         }    
         switch (dnsResourceRecord->type) {
@@ -289,31 +298,24 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
                 }
                 break;
             case A:
-                memset(name, 0, MAX_DOMAIN_NAME);
-                if (!parseIPv4Addr(buf, pos, name)) {
+                if (!parseIPv4Addr(buf, pos, dnsResourceRecord)) {
                     fprintf(stderr, "IPv4 error\n");
-                    return -1;
-                }
-                dnsResourceRecord->data = strdup(name);
-                if (!dnsResourceRecord->data) {
                     return -1;
                 }
                 break;
             case AAAA:
-                char ipv6[MAX_IPV6_ADDR] = {0};
-                if (!parseIPv6Addr(buf, pos, ipv6)) {
+                if (!parseIPv6Addr(buf, pos, dnsResourceRecord)) {
                     fprintf(stderr, "IPv6 error\n");
                     return -1;
                 }
-                dnsResourceRecord->data = strdup(ipv6);
-                if (!dnsResourceRecord->data) {
-                    return -1;
-                }
                 break;
-            //case TXT:
+            case OPT:
+                if (!parseOPTRR(buf, pos, dnsResourceRecord))
+                    return -1;
+                break;
             default:
                 (*pos) += dnsResourceRecord->dataLength;
-                return -1;
+                break;
         }
     }
 
@@ -351,7 +353,7 @@ int parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
 }
 
 int parseDnsResponse(uint8_t *buf, int buflen) {
-    printf("received %d\n", buflen);
+    //printf("received %d\n", buflen);
     DNSPacket *dnsPacket = createDNSPacket();
     if (parseDnsPacket(dnsPacket, buf, buflen) < 0)
         return -1;
@@ -360,23 +362,25 @@ int parseDnsResponse(uint8_t *buf, int buflen) {
     return 0;
 }
 
-int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, char *name) {
+int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+    dnsResourceRecord->data = calloc(MAX_IPV6_ADDR, 1);
     int k = 0;                            
     for (int j=0; j<8; j++) {             
-        k += sprintf(&name[k], "%02x%02x:", buffer[*pos], buffer[(*pos)+1]);
+        k += sprintf(&dnsResourceRecord->data[k], "%02x%02x:", buffer[*pos], buffer[(*pos)+1]);
         (*pos) += 2;                          
     }                                
-    name[k-1] = 0;
+    dnsResourceRecord->data[k-1] = 0;
     return 1;
 }
 
-int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, char *name) {
+int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+    dnsResourceRecord->data = calloc(MAX_IPV4_ADDR, 1);
     int k = 0;                            
     for (int j=0; j<4; j++) {             
-        k += sprintf(&name[k], "%d.", (unsigned char)buffer[*pos]);
+        k += sprintf(&dnsResourceRecord->data[k], "%d.", (unsigned char)buffer[*pos]);
         (*pos)++;                          
     }                                
-    name[k-1] = 0;
+    dnsResourceRecord->data[k-1] = 0;
     return 1;
 }
 

@@ -9,7 +9,7 @@
 
 #define BUF_SZ 1024
 
-typedef void (*buildMsg) (void *arg, char *buf, int *size);
+typedef void (*buildMsg) (void *arg, uint8_t *buf, int *size);
 typedef int (*parseMsg) (uint8_t *buf, int size);
 
 int sendMsg(const char *srv, const int port,

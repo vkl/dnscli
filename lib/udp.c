@@ -32,7 +32,7 @@ sendMsg(const char *srv, const int port,
     }
     
     int buflen = 0;
-    char *buf = calloc(1, BUF_SZ);
+    uint8_t *buf = calloc(1, BUF_SZ);
     __buildFunc(arg, buf, &buflen);
     int rc;
     if ( (rc = write(fd, buf, buflen)) != buflen) {
