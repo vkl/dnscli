@@ -6,8 +6,10 @@
 
 #include "dns.h"
 
-void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen) {
-    char *name = (char*)arg;
+void
+buildDnsQuery(const char *name, const DNSType dnsType,
+        uint8_t **buffer, int *buflen)
+{
     char *query;
     char header[HEADER_SZ] = {0};
     
@@ -21,7 +23,7 @@ void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen) {
     header[4] = 0;         // Number of questions
     header[5] = 1;
 
-    memcpy(buffer, header, HEADER_SZ);
+    memcpy((*buffer), header, HEADER_SZ);
     
     // Question section
     char buf[MAX_DOMAIN_NAME] = {0};
@@ -32,29 +34,69 @@ void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen) {
     
     while(token) {
         int len = strlen(token);
-        buffer[i] = (char)len;
+        (*buffer)[i] = (char)len;
         i++;
-        memcpy(&buffer[i], token, len);
+        memcpy(&(*buffer)[i], token, len);
         i += len;
         token = strtok(NULL, ".");
     }
 
     // End of question section
-    buffer[i] = 0; i++; // Terminaton of QNAME
-    buffer[i] = 0; i++; // QTYPE
-    buffer[i] = 1; i++;
-    buffer[i] = 0; i++; // QCLASS
-    buffer[i] = 1;
+    (*buffer)[i] = 0; i++; // Terminaton of QNAME
+    *((uint16_t*)&(*buffer)[i]) = htons(dnsType); i = i + 2;
+    (*buffer)[i] = 0; i++; // QCLASS
+    (*buffer)[i] = 1;
 
     *buflen = i + 1;
 }
 
-DNSPacket *createDNSPacket() {
+void
+buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen)
+{
+    uint16_t pos = 0;
+    buffer[pos++] = (dnsPacket->header.transactionID >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.transactionID & 0xFF;
+    buffer[pos++] = (dnsPacket->header.flags >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.flags & 0xFF;
+    buffer[pos++] = (dnsPacket->header.questionCount >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.questionCount & 0xFF;
+    buffer[pos++] = (dnsPacket->header.answerCount >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.answerCount & 0xFF;
+    buffer[pos++] = (dnsPacket->header.authorityCount >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.authorityCount & 0xFF;
+    buffer[pos++] = (dnsPacket->header.additionalCount >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->header.additionalCount & 0xFF;
+    
+    char *token = strtok(dnsPacket->questions[0].name, ".");
+    while(token) {
+        int len = strlen(token);
+        buffer[pos++] = (uint8_t)len;
+        memcpy(&buffer[pos], token, len);
+        pos += len;
+        token = strtok(NULL, ".");
+    }
+    pos++;
+
+    buffer[pos++] = (dnsPacket->questions[0].type >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->questions[0].type & 0xFF;
+
+    buffer[pos++] = (dnsPacket->questions[0].class >> 8) & 0xFF;
+    buffer[pos++] = dnsPacket->questions[0].class & 0xFF;
+
+    (*buflen) = pos;
+    //DEBUG_DUMP(buffer, (*buflen));
+}
+
+DNSPacket *
+createDNSPacket()
+{
     DNSPacket (*dnsPacket) = calloc(1, sizeof(DNSPacket));
     return dnsPacket;
 }
 
-void freeDNSPacket(DNSPacket *(*dnsPacket)) {
+void
+freeDNSPacket(DNSPacket *(*dnsPacket))
+{
     if ((*dnsPacket) == NULL)
         return;
     for (uint16_t i=0; i < (*dnsPacket)->header.questionCount; i++) {
@@ -62,6 +104,14 @@ void freeDNSPacket(DNSPacket *(*dnsPacket)) {
     }
     free((*dnsPacket)->questions);
     for (uint16_t i=0; i < (*dnsPacket)->header.answerCount; i++) {
+#ifdef DEBUG_TRACE
+        printf("cnt: %d, curr: %d, name: %s, data: %s, addr0: %p, addr1: %p\n\r",
+                (*dnsPacket)->header.answerCount, i,
+                (*dnsPacket)->answers[i].name, 
+                (*dnsPacket)->answers[i].data,
+                (*dnsPacket)->answers[i].name, 
+                (*dnsPacket)->answers[i].data);
+#endif
         free((*dnsPacket)->answers[i].name);
         free((*dnsPacket)->answers[i].data);
     }
@@ -80,7 +130,9 @@ void freeDNSPacket(DNSPacket *(*dnsPacket)) {
     *dnsPacket = NULL;
 }
 
-int parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+int
+parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
+{
     uint16_t txtLen = 0;
     uint16_t currPos = 0; 
     uint16_t dataLen = dnsResourceRecord->dataLength;
@@ -96,7 +148,9 @@ int parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord
     return 1;
 }
 
-int parseOPTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+int
+parseOPTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
+{
     uint16_t dataLen = dnsResourceRecord->dataLength;
     dnsResourceRecord->data = calloc(dataLen + 1, 1);
     strncpy(dnsResourceRecord->data, (char*)&buf[(*pos)], dataLen);
@@ -104,7 +158,9 @@ int parseOPTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord
     return 1;
 }
 
-int parseSRVRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+int
+parseSRVRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
+{
     uint16_t priority = (buf[(*pos)] << 8) | buf[(*pos) + 1];
     uint16_t weight = (buf[(*pos) + 2] << 8) | buf[(*pos) + 3];
     uint16_t port = (buf[(*pos) + 4] << 8) | buf[(*pos) + 5];
@@ -123,7 +179,9 @@ int parseSRVRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord
     return 1;
 }
 
-int parseDNSName(uint8_t *buf, uint16_t *pos, char *name) {
+int
+parseDNSName(uint8_t *buf, uint16_t *pos, char *name)
+{
     int j = 0;
     int label_len = 0;
     int tmp_pos = *pos;  // Temporary position to track compressed names
@@ -151,37 +209,39 @@ int parseDNSName(uint8_t *buf, uint16_t *pos, char *name) {
     return 1;
 }
 
-void printDnsPacket(DNSPacket *dnsPacket) {
+void
+printDnsPacket(DNSPacket *dnsPacket)
+{
     if (dnsPacket == NULL)
         return;
-    IS_QUERY(dnsPacket->header.flags) ? printf("Query\n") : printf("Reply\n");
-    printf("Qst: %d, Ans: %d, AuthCnt: %d, AddCnt: %d\n",
+    IS_QUERY(dnsPacket->header.flags) ? printf("Query\n\r") : printf("Reply\n\r");
+    printf("Qst: %d, Ans: %d, AuthCnt: %d, AddCnt: %d\n\r",
             dnsPacket->header.questionCount,
             dnsPacket->header.answerCount, 
             dnsPacket->header.authorityCount,
             dnsPacket->header.additionalCount);
     for (uint16_t i = 0; i < dnsPacket->header.questionCount; i++) {
-        printf("%s: type %s, class %s\n",
+        printf("%s: type %s, class %s\n\r",
                 dnsPacket->questions[i].name,
                 DNS_TYPE_TO_STRING(dnsPacket->questions[i].type),
                 DNS_CLASS_TO_STRING(dnsPacket->questions[i].class));
     }
     for (uint16_t i = 0; i < dnsPacket->header.answerCount; i++) {
-        printf("%s: type %s, class %s, %s\n",
+        printf("%s: type %s, class %s, %s\n\r",
                 dnsPacket->answers[i].name,
                 DNS_TYPE_TO_STRING(dnsPacket->answers[i].type),
                 DNS_CLASS_TO_STRING(dnsPacket->answers[i].class),
                 dnsPacket->answers[i].data);
     }
     for (uint16_t i = 0; i < dnsPacket->header.authorityCount; i++) {
-        printf("%s: type %s, class %s, %s\n",
+        printf("%s: type %s, class %s, %s\n\r",
                 dnsPacket->authorities[i].name,
                 DNS_TYPE_TO_STRING(dnsPacket->authorities[i].type),
                 DNS_CLASS_TO_STRING(dnsPacket->authorities[i].class),
                 dnsPacket->authorities[i].data);
     }
     for (uint16_t i = 0; i < dnsPacket->header.additionalCount; i++) {
-        printf("%s: type %s, class %s, %s\n",
+        printf("%s: type %s, class %s, %s\n\r",
                 dnsPacket->additionals[i].name,
                 DNS_TYPE_TO_STRING(dnsPacket->additionals[i].type),
                 DNS_CLASS_TO_STRING(dnsPacket->additionals[i].class),
@@ -190,7 +250,9 @@ void printDnsPacket(DNSPacket *dnsPacket) {
 
 }
 
-int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int buflen) {
+int
+parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int buflen)
+{
     
     uint16_t pos = 0;
     
@@ -235,8 +297,10 @@ int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int buflen) {
     return 1;
 }
 
-int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
-        uint16_t cnt, uint8_t *buf, uint16_t *pos) {
+int
+parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
+        uint16_t cnt, uint8_t *buf, uint16_t *pos)
+{
 
     char name[MAX_DOMAIN_NAME]; 
 
@@ -273,7 +337,10 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
         if (dnsResourceRecord->type == 0 || dnsResourceRecords->class == 0 || 
                 dnsResourceRecords->dataLength == 0) {
             fprintf(stderr, "type: %d, class: %d, ttl: %d, len: %d, attrs error\n",
-                    dnsResourceRecord->type, dnsResourceRecord->class, dnsResourceRecord->ttl, dnsResourceRecord->dataLength);
+                    dnsResourceRecord->type,
+                    dnsResourceRecord->class,
+                    dnsResourceRecord->ttl,
+                    dnsResourceRecord->dataLength);
             return -1;
         }    
         switch (dnsResourceRecord->type) {
@@ -322,8 +389,10 @@ int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
     return 1;
 }
 
-int parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
-        uint8_t *buf, uint16_t *pos) {
+int
+parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
+        uint8_t *buf, uint16_t *pos) 
+{
 
     char name[MAX_DOMAIN_NAME]; 
     for (uint16_t i = 0; i < cnt; i++) {
@@ -352,7 +421,9 @@ int parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
     return 1;
 }
 
-int parseDnsResponse(uint8_t *buf, int buflen) {
+int 
+parseDnsResponse(uint8_t *buf, int buflen)
+{
     //printf("received %d\n", buflen);
     DNSPacket *dnsPacket = createDNSPacket();
     if (parseDnsPacket(dnsPacket, buf, buflen) < 0)
@@ -362,7 +433,9 @@ int parseDnsResponse(uint8_t *buf, int buflen) {
     return 0;
 }
 
-int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+int 
+parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) 
+{
     dnsResourceRecord->data = calloc(MAX_IPV6_ADDR, 1);
     int k = 0;                            
     for (int j=0; j<8; j++) {             
@@ -373,7 +446,9 @@ int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResource
     return 1;
 }
 
-int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) {
+int 
+parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) 
+{
     dnsResourceRecord->data = calloc(MAX_IPV4_ADDR, 1);
     int k = 0;                            
     for (int j=0; j<4; j++) {             

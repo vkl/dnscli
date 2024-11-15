@@ -2,6 +2,7 @@
 #define _DNS_H
 
 #include <stdint.h>
+#include <string.h>
 
 #define HEADER_SZ 12
 #define MAX_LABEL 63
@@ -60,6 +61,8 @@ typedef enum DNSType {
     AAAA = 28,   // a ipv6 host address
     SRV = 33,    // server selection
     OPT = 41,    // option
+    NSEC = 47,   // next Secure record
+    HTTPS = 65,  // https
     IXFR = 251,  // Incremental Zone Transfer
     AXFR = 252,  // Authoritative Zone Transfer
     ANY = 255    // any  
@@ -71,6 +74,25 @@ typedef enum DNSClass {
     CH = 3,     // the CHAOS class
     HS = 4      // Hesiod [Dyer 87]
 } DNSClass;
+
+#define STR_TO_DNS_TYPE(s) \
+    strcmp("A", s) == 0 ? A : \
+    strcmp("NS", s) == 0 ? NS :\
+    strcmp("MD", s) == 0 ? MD :\
+    strcmp("MF", s) == 0 ? MF :\
+    strcmp("CNAME", s) == 0 ? CNAME :\
+    strcmp("SOA", s) == 0 ? SOA :\
+    strcmp("PTR", s) == 0 ? PTR :\
+    strcmp("HINFO", s) == 0 ? HINFO :\
+    strcmp("MINFO", s) == 0 ? MINFO :\
+    strcmp("MX", s) == 0 ? MX :\
+    strcmp("TXT", s) == 0 ? TXT :\
+    strcmp("AAAA", s) == 0 ? AAAA :\
+    strcmp("SRV", s) == 0 ? SRV :\
+    strcmp("OPT", s) == 0 ? OPT :\
+    strcmp("IXFR", s) == 0 ? IXFR :\
+    strcmp("AXFR", s) == 0 ? AXFR :\
+    strcmp("ANY", s) == 0 ? ANY : -1
 
 #define DNS_TYPE_TO_STRING(type) \
     ((type) == A ? "A" : \
@@ -107,9 +129,9 @@ do {                                     \
                 (unsigned char)(buf)[i]);\
         cnt++;                           \
         if (cnt % 8 == 0) printf(" ");   \
-        if (cnt % 16 == 0) printf("\n"); \
+        if (cnt % 16 == 0) printf("\n\r"); \
     }                                    \
-    if (cnt % 16 != 0) printf("\n");     \
+    if (cnt % 16 != 0) printf("\n\r");     \
 } while(0)
 
 #define DNS_TYPE(type)                   \
@@ -147,8 +169,8 @@ do {                                     \
 
 DNSPacket *createDNSPacket();
 void freeDNSPacket(DNSPacket **dnsPacket);
-
-void buildDnsQuery(void *arg, uint8_t *buffer, int *buflen);
+void buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen);
+void buildDnsQuery(const char *name, DNSType dnsType, uint8_t **buffer, int *buflen);
 int parseDnsResponse(uint8_t *buf, int buflen);
 void parseAddr(uint8_t *buffer, int *pos);
 int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);

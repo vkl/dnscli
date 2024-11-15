@@ -13,6 +13,7 @@ typedef void (*buildMsg) (void *arg, uint8_t *buf, int *size);
 typedef int (*parseMsg) (uint8_t *buf, int size);
 
 int sendMsg(const char *srv, const int port,
-        buildMsg __func, void *arg, parseMsg __parseFunc);
+        uint8_t *msg, uint16_t msgLen, parseMsg __parseFunc);
+int sendMulticastDNS(const char *multicast_addr, const int port, uint8_t *buffer, uint16_t buflen);
 
 #endif

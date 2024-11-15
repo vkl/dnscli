@@ -10,7 +10,9 @@
 #include "dns.h" // buildDnsQuery, parseDnsResponse
 #include "mdns.h" // startMonitor
 
-void usage(const char *progname) {
+static void
+usage(const char *progname)
+{
     fprintf(stderr, "Usage: %s [-m] [-q | -r] OR <domain_name> <dns_server>\n", progname);
     fprintf(stderr, "  -m        : Monitor mDNS (requires -a, -q, or -r)\n");
     fprintf(stderr, "  -q        : Show only queries\n");
@@ -23,10 +25,13 @@ void usage(const char *progname) {
     fprintf(stderr, "Example 4: %s www.example.com 8.8.8.8\n", progname);
 }
 
-int main(int argc, char *argv[]) {
+int
+main(int argc, char *argv[])
+{
     int opt;
     char flags = 0;
-    while((opt = getopt(argc, argv, "maqrh")) != -1)  
+    char *dnsType = "A";
+    while((opt = getopt(argc, argv, "maqrht:")) != -1)  
     {  
         switch(opt)  
         {  
@@ -38,6 +43,9 @@ int main(int argc, char *argv[]) {
                 break;
             case 'r':
                 flags |= 0x8;
+                break;
+            case 't':
+                dnsType = optarg;
                 break;
             case 'h':
                 usage(argv[0]);
@@ -60,12 +68,19 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    const char *name = argv[argc - optind - 1];
-    const char *dns = argv[argc - optind];
+    const char *name = argv[argc - 2];
+    const char *dns = argv[argc - 1];
     const int port = 53;
 
     int rc = 0;
-    rc = sendMsg(dns, port, buildDnsQuery, (void*)name, parseDnsResponse);
+    int msgLen = 1024;
+    uint8_t *msg = calloc(msgLen, 1);
+    buildDnsQuery(name, STR_TO_DNS_TYPE(dnsType), &msg, &msgLen);
+#ifdef DEBUG_TRACE
+    DEBUG_DUMP(msg, msgLen);
+#endif
+    rc = sendMsg(dns, port, msg, msgLen, parseDnsResponse);
+    free(msg);
     return rc;
 }
 
