@@ -172,19 +172,13 @@ void freeDNSPacket(DNSPacket **dnsPacket);
 void buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen);
 void buildDnsQuery(const char *name, DNSType dnsType, uint8_t **buffer, int *buflen);
 int parseDnsResponse(uint8_t *buf, int buflen);
-void parseAddr(uint8_t *buffer, int *pos);
 int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseOPTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseSRVRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-int parseAAAARR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseTXTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-void parseAnswer(uint8_t *buffer, int *pos);
-void parseQuery(uint8_t *buffer, int *pos);
-void parseName(uint8_t *buffer, int *pos, const char *prefix);
 int parseDNSName(uint8_t *buf, uint16_t *pos, char *name);
 int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int n);
-void parseDNSPacketReplyFields(DNSPacket *dnsPacket, uint8_t *buf, uint16_t *pos);
 
 int parseDNSPacketQueries(DNSQuestion *dnsQuestions,
         uint16_t cnt, uint8_t *buf, uint16_t *pos);

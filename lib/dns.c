@@ -95,7 +95,7 @@ createDNSPacket()
 }
 
 void
-freeDNSPacket(DNSPacket *(*dnsPacket))
+freeDNSPacket(DNSPacket **dnsPacket)
 {
     if ((*dnsPacket) == NULL)
         return;

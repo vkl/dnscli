@@ -8,7 +8,13 @@
 #define MDNS_PORT 5353
 #define MDNS_GROUP "224.0.0.251"
 
-void startMonitor(parseMsg __parseFunc, uint8_t flags);
+enum monitorType {
+    ALL,
+    QUERY,
+    REQUEST
+};
+
+void startMonitor(parseMsg __parseFunc, enum monitorType monType);
 
 #endif
 
