@@ -77,6 +77,9 @@ sendMsg(const char *srv, const int port, uint8_t *msg,
         return -1;
     }
     
+    int buflen = 0;
+    uint8_t *buf = calloc(1, BUF_SZ);
+    __buildFunc(arg, buf, &buflen);
     int rc;
     if ( (rc = write(fd, msg, msgLen)) != msgLen) {
         perror("write error");
