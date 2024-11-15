@@ -17,10 +17,10 @@
 
 int efd;
 
-void *
+static void *
 monitor(void *arg) 
 {
-    uint8_t flags = *((uint8_t*)arg);
+    enum monitorType monType = *((enum monitorType*)arg);
     DNSPacket *dnsPacket;
     uint8_t sendbuf[512] = {0};
     uint16_t buflen = 0;
@@ -94,11 +94,11 @@ monitor(void *arg)
 #ifdef DEBUG_DUMP
                     DEBUG_DUMP(buf, n);
 #endif
-                    if (flags == 0x1) {
+                    if (monType == ALL) {
                         printDnsPacket(dnsPacket);
-                    } else if (flags == 0x5 && IS_QUERY(dnsPacket->header.flags)) {
+                    } else if (monType == QUERY && IS_QUERY(dnsPacket->header.flags)) {
                         printDnsPacket(dnsPacket);   
-                    } else if (flags == 0x9 && !IS_QUERY(dnsPacket->header.flags)) {
+                    } else if (monType == REQUEST && !IS_QUERY(dnsPacket->header.flags)) {
                         printDnsPacket(dnsPacket); 
                     }
                 }
@@ -145,7 +145,7 @@ done:
 }
 
 void 
-startMonitor(parseMsg __parseFunc, uint8_t flags) 
+startMonitor(parseMsg __parseFunc, enum monitorType monType) 
 {
     int rc;
     
@@ -157,7 +157,7 @@ startMonitor(parseMsg __parseFunc, uint8_t flags)
     
     pthread_t monitor_id = 0;
     pthread_t interactive_id = 0; 
-    pthread_create(&monitor_id, NULL, monitor, (void*)&flags);
+    pthread_create(&monitor_id, NULL, monitor, (void*)&monType);
     pthread_create(&interactive_id, NULL, interactive, NULL);
 
     pthread_join(monitor_id, NULL);

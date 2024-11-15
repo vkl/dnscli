@@ -54,5 +54,7 @@ dkms.conf
 build/Debug/*
 !build/Debug/.keep
 bin/*
-
+.vs/*
+out/*
+*.json
 
