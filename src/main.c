@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,20 +30,25 @@ int
 main(int argc, char *argv[])
 {
     int opt;
-    char flags = 0;
+    enum monitorType monType = ALL;
     char *dnsType = "A";
+    bool isMonitor = false;
+    
     while((opt = getopt(argc, argv, "maqrht:")) != -1)  
     {  
         switch(opt)  
         {  
             case 'm':  
-                flags |= 0x1;  
+                isMonitor = true;  
+                break;
+            case 'a':
+                monType = ALL;
                 break;
             case 'q':
-                flags |= 0x4; 
+                monType = QUERY;
                 break;
             case 'r':
-                flags |= 0x8;
+                monType = REQUEST;
                 break;
             case 't':
                 dnsType = optarg;
@@ -53,13 +59,8 @@ main(int argc, char *argv[])
         }
     }
 
-    if (flags > 9) {
-        usage(argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    if ((flags & 1) == 1) {
-        startMonitor(parseDnsResponse, flags);
+    if (isMonitor == true) {
+        startMonitor(parseDnsResponse, monType);
         return EXIT_SUCCESS;
     }
 
