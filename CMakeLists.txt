@@ -11,14 +11,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_definitions(_DEFAULT_SOURCE _XOPEN_SOURCE=700)
 
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -fno-omit-frame-pointer")
-set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O2 -g3")
+set(CMAKE_C_FLAGS_DEBUG
+    "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -fno-omit-frame-pointer"
+)
+
+set(CMAKE_C_FLAGS_RELEASE
+    "${CMAKE_C_FLAGS_RELEASE} -O2"
+)
+
+set(CMAKE_C_FLAGS_RELWITHDEBINFO
+    "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O2 -g3 -fno-omit-frame-pointer"
+)
 
 add_subdirectory(lib)
-
 add_executable(dnscli
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 
