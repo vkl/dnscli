@@ -15,7 +15,7 @@ static void
 usage(const char *progname)
 {
     fprintf(stderr, "Usage: %s [-m] [-q | -r] OR <domain_name> <dns_server>\n", progname);
-    fprintf(stderr, "  -m        : Monitor mDNS (requires -a, -q, or -r)\n");
+    fprintf(stderr, "  -m        : Monitor mDNS\n");
     fprintf(stderr, "  -q        : Show only queries\n");
     fprintf(stderr, "  -r        : Show only replies\n");
     fprintf(stderr, "  <domain_name> : The domain name to query\n");
@@ -77,9 +77,7 @@ main(int argc, char *argv[])
     int msgLen = 1024;
     uint8_t *msg = calloc(msgLen, 1);
     buildDnsQuery(name, STR_TO_DNS_TYPE(dnsType), &msg, &msgLen);
-#ifdef DEBUG_TRACE
     DEBUG_DUMP(msg, msgLen);
-#endif
     rc = sendMsg(dns, port, msg, msgLen, parseDnsResponse);
     free(msg);
     return rc;

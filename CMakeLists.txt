@@ -2,22 +2,30 @@
 cmake_minimum_required(VERSION 3.12)
 
 # Project name and version
-project(dnscli VERSION 1.0)
+project(dnscli VERSION 1.0 LANGUAGES C)
 
-# Request C++ 11 standard features
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(ASAN_FLAGS "-fsanitize=address -g")
+add_compile_definitions(_DEFAULT_SOURCE _XOPEN_SOURCE=700)
 
-# option(BUILD_SHARED_LIBS "Build using shared libraries" ON)
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+endif()
+
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -fno-omit-frame-pointer")
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O2 -g3")
+
 add_subdirectory(lib)
-add_definitions(-DDEBUG_TRACE)
-# Compile the passed source files into an executable 
-add_executable(dnscli 
+
+add_executable(dnscli
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
-target_link_libraries(dnscli dns)
-# Set the output directory for executables
+
+find_package(Threads REQUIRED)
+target_link_libraries(dnscli PRIVATE Threads::Threads dns)
+
 set_target_properties(dnscli
     PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin/$<CONFIG>")
+

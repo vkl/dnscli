@@ -1,6 +1,8 @@
 #ifndef _DNS_H
 #define _DNS_H
 
+#include <arpa/inet.h>
+
 #include <stdint.h>
 #include <string.h>
 
@@ -8,7 +10,7 @@
 #define MAX_LABEL 63
 #define MAX_DOMAIN_NAME 255
 #define MAX_IPV4_ADDR 16
-#define MAX_IPV6_ADDR 39
+#define MAX_IPV6_ADDR INET6_ADDRSTRLEN
 
 // DNS Header structure
 typedef struct {
@@ -121,18 +123,23 @@ typedef enum DNSClass {
 
 #define IS_QUERY(flags) (!((flags) & (1 << 15)))
 
-#define DEBUG_DUMP(buf,n)                \
-do {                                     \
-    int cnt = 0;                         \
-    for (int i=0; i<(n); i++) {          \
-        printf("%02x ",                  \
-                (unsigned char)(buf)[i]);\
-        cnt++;                           \
-        if (cnt % 8 == 0) printf(" ");   \
+#ifdef DEBUG_TRACE
+#define DEBUG_DUMP(buf,n)                  \
+do {                                       \
+    int cnt = 0;                           \
+    for (int i=0; i<(n); i++) {            \
+        printf("%02x ",                    \
+                (unsigned char)(buf)[i]);  \
+        cnt++;                             \
+        if (cnt % 8 == 0) printf(" ");     \
         if (cnt % 16 == 0) printf("\n\r"); \
-    }                                    \
+    }                                      \
     if (cnt % 16 != 0) printf("\n\r");     \
 } while(0)
+#else
+#define DEBUG_DUMP(buf,n)                  \
+do {} while(0)
+#endif
 
 #define DNS_TYPE(type)                   \
 do {                                     \

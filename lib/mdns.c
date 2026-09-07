@@ -85,15 +85,15 @@ monitor(void *arg)
             n = recvfrom(fd, buf, 1024, 0, (struct sockaddr*)&src_addr, &addr_len);
             if (n > 0) {
                 inet_ntop(AF_INET, &src_addr.sin_addr, src_ip, sizeof(src_ip));
+#ifdef DEBUG_TRACE
                 printf("Received %zd bytes from %s:%d\n\r", n, src_ip, ntohs(src_addr.sin_port));
+#endif
                 DNSPacket *dnsPacket = createDNSPacket();
                 if (parseDnsPacket(dnsPacket, buf, n) < 0) {
                     fprintf(stderr, "error parse DNS packet\n\r");
                     DEBUG_DUMP(buf, n);
                 } else {
-#ifdef DEBUG_DUMP
                     DEBUG_DUMP(buf, n);
-#endif
                     if (monType == ALL) {
                         printDnsPacket(dnsPacket);
                     } else if (monType == QUERY && IS_QUERY(dnsPacket->header.flags)) {
