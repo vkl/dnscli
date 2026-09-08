@@ -10,20 +10,23 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-
 #include "dns.h"
 #include "mdns.h"
 #include "cli.h"
 
 int efd;
 
+extern uint8_t requestbuf[512];
+
 static void *
 monitor(void *arg) 
 {
     enum monitorType monType = *((enum monitorType*)arg);
-    DNSPacket *dnsPacket;
     uint8_t sendbuf[512] = {0};
+    uint8_t receivebuf[1024] = {0};
     uint16_t buflen = 0;
+    DNSPacket *dnsPacketRequest;
+    DNSPacket *dnsPacketResponse;
     
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd == -1) {
@@ -58,7 +61,6 @@ monitor(void *arg)
         return NULL;
     }
     
-    uint8_t *buf = calloc(1, 1024);
     ssize_t n = 0;
     struct pollfd fds[2];
     struct sockaddr_in src_addr;
@@ -80,49 +82,52 @@ monitor(void *arg)
             //printf("Timeout occurred! No events.\n\r");
             continue;
         }
+
         // read data
         if (fds[0].revents & POLLIN) {
-            n = recvfrom(fd, buf, 1024, 0, (struct sockaddr*)&src_addr, &addr_len);
+            n = recvfrom(fd, receivebuf, 1024, 0, (struct sockaddr*)&src_addr, &addr_len);
             if (n > 0) {
                 inet_ntop(AF_INET, &src_addr.sin_addr, src_ip, sizeof(src_ip));
 #ifdef DEBUG_TRACE
                 printf("Received %zd bytes from %s:%d\n\r", n, src_ip, ntohs(src_addr.sin_port));
 #endif
-                DNSPacket *dnsPacket = createDNSPacket();
-                if (parseDnsPacket(dnsPacket, buf, n) < 0) {
+                dnsPacketResponse = createDNSPacket();
+                if (parseDnsPacket(dnsPacketResponse, receivebuf, n) < 0) {
                     fprintf(stderr, "error parse DNS packet\n\r");
-                    DEBUG_DUMP(buf, n);
+                    DEBUG_DUMP(receivebuf, n);
                 } else {
-                    DEBUG_DUMP(buf, n);
+                    DEBUG_DUMP(receivebuf, n);
                     if (monType == ALL) {
-                        printDnsPacket(dnsPacket);
-                    } else if (monType == QUERY && IS_QUERY(dnsPacket->header.flags)) {
-                        printDnsPacket(dnsPacket);   
-                    } else if (monType == REQUEST && !IS_QUERY(dnsPacket->header.flags)) {
-                        printDnsPacket(dnsPacket); 
+                        printDnsPacket(dnsPacketResponse);
+                    } else if (monType == QUERY && IS_QUERY(dnsPacketResponse->header.flags)) {
+                        printDnsPacket(dnsPacketResponse);   
+                    } else if (monType == REQUEST && !IS_QUERY(dnsPacketResponse->header.flags)) {
+                        printDnsPacket(dnsPacketResponse); 
                     }
                 }
-                freeDNSPacket(&dnsPacket);
+                freeDNSPacket(&dnsPacketResponse);
             }    
         }
+
         // write data
         if (fds[0].revents & POLLOUT) {
             //printf("sending packet.....\n\r");
-            dnsPacket = calloc(1, sizeof(DNSPacket));
-            dnsPacket->header.questionCount = 1;
-            dnsPacket->header.transactionID = 0x0000;
-            dnsPacket->questions = calloc(1, sizeof(DNSQuestion));
-            dnsPacket->questions[0].type = PTR;
-            dnsPacket->questions[0].class = IN;
-            dnsPacket->questions[0].name = strdup("_googlecast._tcp.local");
-            buildDNSPacket(dnsPacket, sendbuf, &buflen);
+            dnsPacketRequest = createDNSPacket();
+            dnsPacketRequest->header.questionCount = 1;
+            dnsPacketRequest->header.transactionID = 0x0000;
+            dnsPacketRequest->questions = calloc(1, sizeof(DNSQuestion));
+            dnsPacketRequest->questions[0].type = PTR;
+            dnsPacketRequest->questions[0].class = IN;
+            dnsPacketRequest->questions[0].name = (char *)strdup(requestbuf); //strdup("_googlecast._tcp.local");
+            buildDNSPacket(dnsPacketRequest, sendbuf, &buflen);
 
             if (sendto(fd, sendbuf, buflen, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
                 perror("sendto failed\n\r");
             }
-            freeDNSPacket(&dnsPacket);
+            freeDNSPacket(&dnsPacketRequest);
             fds[0].events &= ~POLLOUT;
         }
+
         // signal from user
         if (fds[1].revents & POLLIN) {
             uint64_t signal = 0;
@@ -140,7 +145,7 @@ monitor(void *arg)
 
 done:
     close(fd);
-    free(buf);
+    //free(buf);
     return NULL;
 }
 
