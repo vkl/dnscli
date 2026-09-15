@@ -7,8 +7,8 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-#include "udp.h" // sendMsg
-#include "dns.h" // buildDnsQuery, parseDnsResponse
+#include "udp.h"  // sendMsg
+#include "dns.h"  // buildDnsQuery, parseDnsResponse
 #include "mdns.h" // startMonitor
 
 static void
@@ -32,6 +32,13 @@ main(int argc, char *argv[])
     int opt;
     enum monitorType monType = ALL;
     char *dnsType = "A";
+    char *name = NULL;
+    char *dns = NULL;
+    const int port = 53;
+    int rc = EXIT_SUCCESS;
+    int msgLen = 1024;
+    uint8_t *msg = calloc(msgLen, 1);
+
     bool isMonitor = false;
     
     while((opt = getopt(argc, argv, "maqrht:")) != -1)  
@@ -55,31 +62,36 @@ main(int argc, char *argv[])
                 break;
             case 'h':
                 usage(argv[0]);
-                return EXIT_SUCCESS;
+                goto out;
         }
     }
 
     if (isMonitor == true) {
-        startMonitor(parseDnsResponse, monType);
-        return EXIT_SUCCESS;
+        startMonitor(monType);
+        goto out;
     }
 
     if (argc - optind < 2) {
         usage(argv[0]);
-        return EXIT_FAILURE;
+        rc = EXIT_FAILURE;
+        goto out;
     }
 
-    const char *name = argv[argc - 2];
-    const char *dns = argv[argc - 1];
-    const int port = 53;
+    name = argv[argc - 2];
+    dns = argv[argc - 1];
 
-    int rc = 0;
-    int msgLen = 1024;
-    uint8_t *msg = calloc(msgLen, 1);
+    msg = calloc(msgLen, 1);
+    if (msg == NULL) {
+        fprintf(stderr, "memory error\n");
+        goto out;
+    }
+
     buildDnsQuery(name, STR_TO_DNS_TYPE(dnsType), &msg, &msgLen);
-    DEBUG_DUMP(msg, msgLen);
-    rc = sendMsg(dns, port, msg, msgLen, parseDnsResponse);
+    // DEBUG_DUMP(msg, msgLen);
+    rc = sendMsg(dns, port, msg, msgLen);
     free(msg);
+
+out:
     return rc;
 }
 

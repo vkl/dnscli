@@ -14,7 +14,7 @@ enum monitorType {
     REQUEST
 };
 
-void startMonitor(parseMsg __parseFunc, enum monitorType monType);
+void startMonitor(enum monitorType monType);
 
 #endif
 

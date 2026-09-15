@@ -2,9 +2,10 @@
 #define _DNS_H
 
 #include <arpa/inet.h>
-
 #include <stdint.h>
 #include <string.h>
+
+#include <curses.h>
 
 #define HEADER_SZ 12
 #define MAX_LABEL 63
@@ -77,6 +78,8 @@ typedef enum DNSClass {
     HS = 4      // Hesiod [Dyer 87]
 } DNSClass;
 
+typedef void (*printTerminal)(const char *format, ...);
+
 #define STR_TO_DNS_TYPE(s) \
     strcmp("A", s) == 0 ? A : \
     strcmp("NS", s) == 0 ? NS :\
@@ -97,23 +100,23 @@ typedef enum DNSClass {
     strcmp("ANY", s) == 0 ? ANY : -1
 
 #define DNS_TYPE_TO_STRING(type) \
-    ((type) == A ? "A" : \
-    (type) == NS ? "NS" : \
-    (type) == MD ? "MD" : \
-    (type) == MF ? "MF" : \
-    (type) == CNAME ? "CNAME" : \
-    (type) == SOA ? "SOA" : \
-    (type) == PTR ? "PTR" : \
-    (type) == HINFO ? "HINFO" : \
-    (type) == MINFO ? "MINFO" : \
-    (type) == MX ? "MX" : \
-    (type) == TXT ? "TXT" : \
-    (type) == AAAA ? "AAAA" : \
-    (type) == SRV ? "SRV" : \
-    (type) == OPT ? "OPT" : \
-    (type) == IXFR ? "IXFR" : \
-    (type) == AXFR ? "AXFR" : \
-    (type) == ANY ? "ANY" : "UNKNOWN")
+    ((type) == A ?    "A     " : \
+    (type) == NS ?    "NS    " : \
+    (type) == MD ?    "MD    " : \
+    (type) == MF ?    "MF    " : \
+    (type) == CNAME ? "CNAME " : \
+    (type) == SOA ?   "SOA   " : \
+    (type) == PTR ?   "PTR   " : \
+    (type) == HINFO ? "HINFO " : \
+    (type) == MINFO ? "MINFO " : \
+    (type) == MX ?    "MX    " : \
+    (type) == TXT ?   "TXT   " : \
+    (type) == AAAA ?  "AAAA  " : \
+    (type) == SRV ?   "SRV   " : \
+    (type) == OPT ?   "OPT   " : \
+    (type) == IXFR ?  "IXFR  " : \
+    (type) == AXFR ?  "AXFR  " : \
+    (type) == ANY ?   "ANY   " : "TYPE? ")
 
 #define DNS_CLASS_TO_STRING(class) \
     (((class) & 0x7FFF) == 0x0001 ? "IN" : \
@@ -178,7 +181,6 @@ DNSPacket *createDNSPacket();
 void freeDNSPacket(DNSPacket **dnsPacket);
 void buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen);
 void buildDnsQuery(const char *name, DNSType dnsType, uint8_t **buffer, int *buflen);
-int parseDnsResponse(uint8_t *buf, int buflen);
 int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseOPTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
@@ -186,13 +188,10 @@ int parseSRVRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRec
 int parseTXTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseDNSName(uint8_t *buf, uint16_t *pos, char *name);
 int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int n);
-
 int parseDNSPacketQueries(DNSQuestion *dnsQuestions,
         uint16_t cnt, uint8_t *buf, uint16_t *pos);
-
 int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
         uint16_t cnt, uint8_t *buf, uint16_t *pos);
-
-void printDnsPacket(DNSPacket *dnsPacket);
+void printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer);
 
 #endif

@@ -5,6 +5,7 @@
 
 #include "dns.h"
 #include "udp.h"
+#include "cli.h"
 
 int 
 sendMulticastDNS(const char *multicast_addr, const int port, uint8_t *buffer, uint16_t buflen) 
@@ -52,64 +53,65 @@ sendMulticastDNS(const char *multicast_addr, const int port, uint8_t *buffer, ui
 }
 
 int 
-sendMsg(const char *srv, const int port, uint8_t *msg, 
-        uint16_t msgLen, parseMsg __parseFunc) 
+sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen) 
 {
+    int rc = -1;
+    int timeout = 50;
+    ssize_t n = 0;
+    struct sockaddr_in sin;
+    uint8_t *buf = NULL;
+    DNSPacket *dnsPacketResponse = createDNSPacket();
 
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd == -1) {
         perror("socket");
-        return -1;
+        goto out;
     }
 
-    struct sockaddr_in sin;
     sin.sin_family = AF_INET;
     sin.sin_addr.s_addr = inet_addr(srv);
     sin.sin_port = htons(port);
 
     if (sin.sin_addr.s_addr == INADDR_NONE) {
         fprintf(stderr, "invalid remote IP %s\n", srv);
-        return -1;
+        goto out;
     }
     
     if (connect(fd, (struct sockaddr*)&sin, sizeof(sin)) == -1) {
         perror("connect error");
-        return -1;
+        goto out;
     }
     
-    //int buflen = 0;
-    //uint8_t *buf = calloc(1, BUF_SZ);
-    //__buildFunc(arg, buf, &buflen);
-    int rc;
     if ( (rc = write(fd, msg, msgLen)) != msgLen) {
         perror("write error");
-        return -1;
+        goto out;
     }
 
-    if (!__parseFunc) return rc;
-
-    int timeout = 50; // 50 * 100_000 = 5 sec
-    uint8_t *buf = calloc(BUF_SZ, 1);
+    buf = calloc(BUF_SZ, 1);
     do {
-        ssize_t n = recv(fd, buf, BUF_SZ, 0);
+        n = recv(fd, buf, BUF_SZ, 0);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 usleep(100000);
                 timeout--;
-                if (timeout <= 0)
+                if (timeout <= 0) {
                     fprintf(stderr, "Could not get response from %s by timeout\n", srv);
+                }
             } else {
                 perror("recv");
                 break;
             }
         } else {
-            rc = __parseFunc(buf, n);
-            if (rc < 0) DEBUG_DUMP(buf, n);  
+            printRawDnsPacket(buf, n, NULL);
             break;
         }
     } while (timeout > 0);
-    free(buf);
-    return rc;
 
+    rc = 0;
+    free(buf);
+    freeDNSPacket(&dnsPacketResponse);
+
+out:
+    return rc;
 }
 
