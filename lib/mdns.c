@@ -40,15 +40,6 @@ static int
 init_ring(Ring *ring)
 {
     int ret = -1;
-    /*
-    for (size_t i = 0; i < RING_SZ; i++) {
-        ring.->items[i] = malloc(sizeof(Packet));
-        if (!ring->items[i]) {
-            ret = -1;
-            goto out;
-        }
-    }
-    */
     ring->head = 0;
     ring->tail = 0;
     ret = 0;
@@ -102,15 +93,6 @@ ring_consume(Ring *ring)
     atomic_store_explicit(&ring->tail, next, memory_order_release);
 }
 
-static int
-deinit_ring(Ring *ring)
-{
-    // for (size_t i = 0; i < RING_SZ; i++) {
-    //     free(ring->items[i]);
-    // }
-    return 0;
-}
-
 static void *
 monitor(void *arg) 
 {
@@ -122,7 +104,6 @@ monitor(void *arg)
     DNSPacket *dnsPacket = NULL;
     Packet *pkt = NULL;
     Packet *pktConsumer = NULL;
-    // DNSPacket *dnsPacketResponse;
     struct ip_mreq mreq;
     struct sockaddr_in server_addr;
     struct sockaddr_in local_addr, sender_addr;
@@ -210,7 +191,7 @@ monitor(void *arg)
             dnsPacketRequest->questions = calloc(1, sizeof(DNSQuestion));
             dnsPacketRequest->questions[0].type = PTR;
             dnsPacketRequest->questions[0].class = IN;
-            dnsPacketRequest->questions[0].name = (char *)strdup((char *)requestbuf); //strdup("_googlecast._tcp.local");
+            dnsPacketRequest->questions[0].name = (char *)strdup((char *)requestbuf);
             buildDNSPacket(dnsPacketRequest, sendbuf, &buflen);
 
             if (sendto(fd, sendbuf, buflen, 0, (struct sockaddr*)&server_addr,
@@ -253,7 +234,6 @@ done:
     *ret = 0;
 
 out:
-    deinit_ring(&ring);
     return (void*)ret;
 }
 

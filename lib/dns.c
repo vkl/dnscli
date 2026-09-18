@@ -7,9 +7,9 @@
 #include <assert.h>
 
 #include "dns.h"
-// #include "cli.h"
+#include "cli.h"
 
-#define MSG_SZ 24
+#define MSG_SZ 1024
 
 typedef int (*outputFunc)(const char *, ...);
 
@@ -27,6 +27,7 @@ static void parseResourceRecords(uint8_t *buffer, uint16_t *pos,
 static int parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
         char *message, int *msgPos, const char *label);
 static void debug_dump(uint8_t *buf, int n, outputFunc output);
+static inline void addToMsg(char *message, int *msgPos, const char *format, ...);
 
 /*
 [15:38:36] QUERY  Q=2 A=0 AUTH=0 ADD=0
@@ -64,10 +65,12 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
     localtime_r(&now, &local_time);
     strftime(timestamp, sizeof(timestamp), "%H:%M:%S", &local_time);
 
+    updateBottomStatus(!IS_QUERY(flags), IS_QUERY(flags), 0);
+
     /*
      * DNS Packet header
      */
-    msgPos += snprintf(message + msgPos, MSG_SZ - msgPos,
+    addToMsg(message, &msgPos,
             "[%s] %s  from %s:%d  Q=%d, A=%d, AUTH=%d, ADD=%d\n\r",
             timestamp,
             IS_QUERY(flags) ? "QUERY" : "REPLY",
@@ -84,7 +87,7 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
             class = ntohs(*(uint16_t*)&buffer[pos]);
             pos += 2;
             /* Q  PTR  IN  _companion-link._tcp.local */
-            msgPos += snprintf(message + msgPos, MSG_SZ - msgPos,
+            addToMsg(message, &msgPos,
                     "  Q  %s%s  %s\n\r",
                     DNS_TYPE_TO_STRING(type),
                     DNS_CLASS_TO_STRING(class),
@@ -113,7 +116,7 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
         }
     }
 
-    msgPos += snprintf(message + msgPos, MSG_SZ - msgPos, "\n\r");
+    addToMsg(message, &msgPos, "\n\r");
     output(message);
     ret = 0;
 
@@ -247,24 +250,21 @@ parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLengt
         if (!parseDNSName(buffer, pos, name)) {
             fprintf(stderr, "Failed to parse DNS name\n");
         } else {
-            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
-                    "       -> %s\n\r", name);
+            addToMsg(message, msgPos, "       -> %s\n\r", name);
         }
         break;
     case A:
         if (!parseIPv4AddrS(buffer, pos, ipv4s, sizeof(ipv4s))) {
             fprintf(stderr, "Failed to parse IPv4 address\n");
         } else {
-            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
-                    "       -> %s\n\r", ipv4s);
+            addToMsg(message, msgPos, "       -> %s\n\r", ipv4s);
         }
         break;
     case AAAA:
         if (!parseIPv6AddrS(buffer, pos, ipv6s, sizeof(ipv6s))) {
             fprintf(stderr, "Failed to parse IPv6 address\n");
         } else {
-            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
-                    "       -> %s\n\r", ipv6s);
+            addToMsg(message, msgPos, "       -> %s\n\r", ipv6s);
         }
         break;
     case SRV:
@@ -329,7 +329,7 @@ parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
             // goto out;
         }
 
-        *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+        addToMsg(message, msgPos,
                 "  %s  %s%s  TTL=%u %s\n\r",
                 label,
                 DNS_TYPE_TO_STRING(type),
@@ -356,8 +356,7 @@ parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
     (*pos) += 6;
     if (parseDNSName(buffer, pos, target) < 0)
         return -1;
-    *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
-            "       -> %u %u %u %s\n\r",
+    addToMsg(message, msgPos, "       -> %u %u %u %s\n\r",
             priority, weight, port, target);    
     return 1;
 }
@@ -389,7 +388,21 @@ debug_dump(uint8_t *buf, int n, outputFunc output)
 static inline void
 addToMsg(char *message, int *msgPos, const char *format, ...)
 {
+    int n = 0;
+    if (*msgPos >= MSG_SZ)
+        return;
+
     va_list args;
     va_start(args, format);
-    *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos, format, args);
+    n = vsnprintf(message + *msgPos, MSG_SZ - *msgPos, format, args);
+    va_end(args);
+
+    if (n < 0)
+        return;
+
+    if (n >= MSG_SZ - *msgPos) {
+        *msgPos = MSG_SZ - 1;
+    } else {
+        *msgPos += n;
+    }
 }

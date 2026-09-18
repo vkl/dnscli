@@ -16,8 +16,16 @@
 #define MSG_SZ 2048
 #define COLOR_REPLY 1
 #define COLOR_QUERY 2
+#define COLOR_SELECT 3
+#define COLOR_HELP 4
 
 #define HELP_MSG "Press 'q' to quit, 'r' to send request, 'p' to pause/resume, 'c' to clear screen"
+
+struct Stat {
+    int q;
+    int r;
+    int ru;
+};
 
 extern int efd;
 volatile sig_atomic_t terminal_resized = 0;
@@ -27,6 +35,9 @@ static WINDOW *query;
 static WINDOW *help;
 static WINDOW *status;
 static WINDOW *messagebox;
+static WINDOW *statusBottom;
+
+static struct Stat stat = { .r = 0, .q = 0, .ru = 0 };
 
 uint8_t requestbuf[BUFF_SZ] = {0};
 
@@ -59,15 +70,13 @@ int
 printToWindow(const char *msg)
 {
     int n = 0;
-    int lines = 0;
-    const char *nline = NULL;
-    nline = strchr(msg, '\n');
-    while (nline != NULL) {
-        lines++;
-        nline = strchr(nline + 1, '\n');
-    }
-    //wmove(result, 0, 0);
-    //winsdelln(result, lines);
+    // int lines = 0;
+    // const char *nline = NULL;
+    // nline = strchr(msg, '\n');
+    // while (nline != NULL) {
+    //     lines++;
+    //     nline = strchr(nline + 1, '\n');
+    // }
     n = waddstr(result, msg);
     wrefresh(result);
 
@@ -118,13 +127,14 @@ interactive(void *arg)
     uint16_t buflen = 0;
     uint16_t i = 0;
     uint8_t start = 0;
-    // DNSPacket *dnsPacket = NULL;
     int key = 0;
     struct winsize terminal_size;
     int rows = 0;
     int columns = 0;
     bool isPaused = false;
-    
+    int curr_line = 0;
+    int width, height, ypos = 0;
+
     initscr();
     cbreak();
     noecho();
@@ -135,6 +145,8 @@ interactive(void *arg)
         use_default_colors();
         init_pair(COLOR_REPLY, COLOR_GREEN, -1);
         init_pair(COLOR_QUERY, COLOR_BLUE, -1);
+        init_pair(COLOR_SELECT, COLOR_BLACK, COLOR_WHITE);
+        init_pair(COLOR_HELP, COLOR_WHITE, COLOR_BLUE);
     }
 
     getmaxyx(stdscr, rows, columns);
@@ -143,10 +155,17 @@ interactive(void *arg)
     status = newwin(1, columns / 2, 1, 0);
     result = newwin(rows - 6, columns / 2, 4, 0);
     messagebox = newwin(rows, columns / 2, 0, columns / 2);
+    statusBottom = newwin(2, columns / 2, rows - 2, 0);
+
+    width = getmaxx(result);
+    height = getmaxy(result);
+
+    keypad(query, TRUE);
+    keypad(result, TRUE);
     scrollok(messagebox, TRUE);
     scrollok(result, TRUE);
 
-    mvwprintw(help, 0, 0, HELP_MSG);
+    waddstr(help, HELP_MSG);
     mvwprintw(status, 0, 0, "Status: Running");
 
     wrefresh(help);
@@ -154,8 +173,7 @@ interactive(void *arg)
     wrefresh(result);
     wrefresh(status);
     wrefresh(messagebox);
-
-    keypad(query, TRUE);
+    wrefresh(statusBottom);
 
     struct sigaction action = {0};
     action.sa_handler = handle_resize;
@@ -174,15 +192,24 @@ interactive(void *arg)
         key = wgetch(query);
 
         if (start == 0) {
+            printToMessageBox("result: %d %d, press %02x\n", height, width, key);
             switch (key) {
                 case 'q': // quit
                     goto done;
                     break;
                 case KEY_DOWN:
-                    wscrl(result, 1);
+                    mvwchgat(result, ypos, 0, width, 0, 0, NULL);
+                    ypos++;
+                    if (ypos >= (height - 1)) ypos = height - 1;
+                    mvwchgat(result, ypos, 0, width, 0, COLOR_SELECT, NULL);
+                    wrefresh(result);
                     break;
                 case KEY_UP:
-                    wscrl(result, -1);
+                    mvwchgat(result, ypos, 0, width, 0, 0, NULL);
+                    ypos--;
+                    if (ypos <= 0) ypos = 0;
+                    mvwchgat(result, ypos, 0, width, 0, COLOR_SELECT, NULL);
+                    wrefresh(result);
                     break;
                 case 'r': // send request
                     i = 0;
@@ -209,7 +236,6 @@ interactive(void *arg)
                     wrefresh(result);
                     break;
                 default:
-                    printToMessageBox("press %02x\n", key);
                     break;
             }
             continue;
@@ -256,4 +282,15 @@ done:
     endwin();
 
     return NULL;
+}
+
+void
+updateBottomStatus(int r, int q, int ru)
+{
+    stat.q += q;
+    stat.r += r;
+    stat.ru += ru;
+    mvwprintw(statusBottom, 0, 0, "R: %d Q: %d RU: %d",
+            stat.r, stat.q, stat.ru);
+    wrefresh(statusBottom);
 }
