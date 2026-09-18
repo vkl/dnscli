@@ -87,7 +87,6 @@ main(int argc, char *argv[])
     }
 
     buildDnsQuery(name, STR_TO_DNS_TYPE(dnsType), &msg, &msgLen);
-    // DEBUG_DUMP(msg, msgLen);
     rc = sendMsg(dns, port, msg, msgLen);
     free(msg);
 

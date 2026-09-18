@@ -1,11 +1,9 @@
-#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
 
 #include "dns.h"
 #include "udp.h"
-#include "cli.h"
 
 int 
 sendMulticastDNS(const char *multicast_addr, const int port, uint8_t *buffer, uint16_t buflen) 
@@ -59,8 +57,7 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
     int timeout = 50;
     ssize_t n = 0;
     struct sockaddr_in sin;
-    uint8_t *buf = NULL;
-    DNSPacket *dnsPacketResponse = createDNSPacket();
+    uint8_t buf[BUF_SZ] = {0};
 
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd == -1) {
@@ -81,13 +78,13 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
         perror("connect error");
         goto out;
     }
-    
+    printf("Sending %d bytes to %s:%d\n", msgLen, srv, port);    
+    DEBUG_DUMP(msg, msgLen);
     if ( (rc = write(fd, msg, msgLen)) != msgLen) {
         perror("write error");
         goto out;
     }
 
-    buf = calloc(BUF_SZ, 1);
     do {
         n = recv(fd, buf, BUF_SZ, 0);
         if (n < 0) {
@@ -102,14 +99,14 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
                 break;
             }
         } else {
-            printRawDnsPacket(buf, n, NULL);
+            printf("\n\rReceived %zd bytes from %s\n\r", n, srv);
+            DEBUG_DUMP(buf, n);
+            printRawDnsPacket(buf, n, NULL, (struct sockaddr*)&sin);
             break;
         }
     } while (timeout > 0);
 
     rc = 0;
-    free(buf);
-    freeDNSPacket(&dnsPacketResponse);
 
 out:
     return rc;

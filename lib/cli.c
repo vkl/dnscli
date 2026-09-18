@@ -4,14 +4,13 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <string.h>
-#include <time.h>
 #include <sys/ioctl.h>
 #include <signal.h>
 
 #include <ncurses.h>
 
 #include "cli.h"
-#include "dns.h"
+// #include "dns.h"
 
 #define BUFF_SZ 1024
 #define MSG_SZ 2048
@@ -23,9 +22,11 @@
 extern int efd;
 volatile sig_atomic_t terminal_resized = 0;
 static WINDOW *result;
+static WINDOW *result_frame;
 static WINDOW *query;
 static WINDOW *help;
 static WINDOW *status;
+static WINDOW *messagebox;
 
 uint8_t requestbuf[BUFF_SZ] = {0};
 
@@ -35,25 +36,42 @@ handle_resize(int signal)
     terminal_resized = 1;
 }
 
-void
-printToWindow(const char *format, ...)
+int
+printToMessageBox(const char *format, ...)
 {
+    va_list args;
+    int n;
+
+    if (messagebox == NULL || format == NULL) {
+        return 0;
+    }
+
+    va_start(args, format);
+    n = vw_printw(messagebox, format, args);
+    va_end(args);
+
+    wrefresh(messagebox);
+
+    return n;
+}
+
+int
+printToWindow(const char *msg)
+{
+    int n = 0;
     int lines = 0;
     const char *nline = NULL;
-    va_list args;
-
-    nline = strchr(format, '\n');
+    nline = strchr(msg, '\n');
     while (nline != NULL) {
         lines++;
         nline = strchr(nline + 1, '\n');
     }
-    wmove(result, 0, 0);
-    winsdelln(result, lines);
-
-    va_start(args, format);
-    vw_printw(result, format, args);
-    va_end(args);
+    //wmove(result, 0, 0);
+    //winsdelln(result, lines);
+    n = waddstr(result, msg);
     wrefresh(result);
+
+    return n;
 }
 
 void
@@ -100,7 +118,7 @@ interactive(void *arg)
     uint16_t buflen = 0;
     uint16_t i = 0;
     uint8_t start = 0;
-    DNSPacket *dnsPacket = NULL;
+    // DNSPacket *dnsPacket = NULL;
     int key = 0;
     struct winsize terminal_size;
     int rows = 0;
@@ -120,10 +138,13 @@ interactive(void *arg)
     }
 
     getmaxyx(stdscr, rows, columns);
-    help = newwin(1, columns, 0, 0);
-    query = newwin(1, columns, 2, 0);
-    result = newwin(rows - 2, columns, 3, 0);
-    status = newwin(1, columns, 1, 0);
+    help = newwin(1, columns / 2, 0, 0);
+    query = newwin(1, columns / 2, 2, 0);
+    status = newwin(1, columns / 2, 1, 0);
+    result = newwin(rows - 6, columns / 2, 4, 0);
+    messagebox = newwin(rows, columns / 2, 0, columns / 2);
+    scrollok(messagebox, TRUE);
+    scrollok(result, TRUE);
 
     mvwprintw(help, 0, 0, HELP_MSG);
     mvwprintw(status, 0, 0, "Status: Running");
@@ -132,6 +153,7 @@ interactive(void *arg)
     wrefresh(query);
     wrefresh(result);
     wrefresh(status);
+    wrefresh(messagebox);
 
     keypad(query, TRUE);
 
@@ -155,6 +177,12 @@ interactive(void *arg)
             switch (key) {
                 case 'q': // quit
                     goto done;
+                    break;
+                case KEY_DOWN:
+                    wscrl(result, 1);
+                    break;
+                case KEY_UP:
+                    wscrl(result, -1);
                     break;
                 case 'r': // send request
                     i = 0;
@@ -181,6 +209,7 @@ interactive(void *arg)
                     wrefresh(result);
                     break;
                 default:
+                    printToMessageBox("press %02x\n", key);
                     break;
             }
             continue;
@@ -219,9 +248,11 @@ done:
     write(efd, &signal, sizeof(signal));
 
     delwin(result);
+    delwin(result_frame);
     delwin(query);
     delwin(help);
     delwin(status);
+    delwin(messagebox);
     endwin();
 
     return NULL;

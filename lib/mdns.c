@@ -13,13 +13,14 @@
 #include <stdbool.h>
 
 #include "dns.h"
+#include "dns_packet.h"
 #include "mdns.h"
 #include "cli.h"
 
 int efd;
 
 #define BUFF_SZ 1024
-#define RING_SZ 1024
+#define RING_SZ 128
 #define PKT_SZ 1024
 
 extern uint8_t requestbuf[BUFF_SZ];
@@ -30,7 +31,7 @@ typedef struct {
 } Packet;
 
 typedef struct {
-    Packet *items[RING_SZ];
+    Packet items[RING_SZ];
     _Atomic size_t head;
     _Atomic size_t tail;
 } Ring;
@@ -39,13 +40,15 @@ static int
 init_ring(Ring *ring)
 {
     int ret = -1;
+    /*
     for (size_t i = 0; i < RING_SZ; i++) {
-        ring->items[i] = malloc(sizeof(Packet));
+        ring.->items[i] = malloc(sizeof(Packet));
         if (!ring->items[i]) {
             ret = -1;
             goto out;
         }
     }
+    */
     ring->head = 0;
     ring->tail = 0;
     ret = 0;
@@ -64,7 +67,7 @@ ring_producer_slot(Ring *ring)
             &ring->tail, memory_order_acquire);
     if (next == tail)
         return NULL;       // full
-    return ring->items[head];
+    return &ring->items[head];
 }
 
 static void
@@ -87,7 +90,7 @@ ring_consumer_slot(Ring *ring)
             memory_order_acquire);
     if (tail == head)
         return NULL;       // empty
-    return ring->items[tail];
+    return &ring->items[tail];
 }
 
 static void
@@ -102,9 +105,9 @@ ring_consume(Ring *ring)
 static int
 deinit_ring(Ring *ring)
 {
-    for (size_t i = 0; i < RING_SZ; i++) {
-        free(ring->items[i]);
-    }
+    // for (size_t i = 0; i < RING_SZ; i++) {
+    //     free(ring->items[i]);
+    // }
     return 0;
 }
 
@@ -193,7 +196,10 @@ monitor(void *arg)
             }
             pktConsumer = ring_consumer_slot(&ring);
             ring_consume(&ring);
-            printRawDnsPacket(pktConsumer->data, pktConsumer->len, printToWindow);
+            if (printRawDnsPacket(pktConsumer->data, pktConsumer->len, printToWindow,
+                    (struct sockaddr*)&src_addr) < 0) {
+                goto done;
+            }
         }
 
         // write data

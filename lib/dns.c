@@ -4,9 +4,29 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <assert.h>
 
 #include "dns.h"
+// #include "cli.h"
 
+#define MSG_SZ 24
+
+typedef int (*outputFunc)(const char *, ...);
+
+/* static variables */
+
+/* static function prototypes */
+static bool parseIPv4AddrS(uint8_t *buffer, uint16_t *pos, char *ipv4Str,
+        int maxLen);
+static bool parseIPv6AddrS(uint8_t *buffer, uint16_t *pos, char *ipv6Str,
+        int maxLen);
+static int parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
+        int *msgPos);
+static void parseResourceRecords(uint8_t *buffer, uint16_t *pos,
+        DNSType type, int dataLength, char *message, int *msgPos);
+static int parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
+        char *message, int *msgPos, const char *label);
+static void debug_dump(uint8_t *buf, int n, outputFunc output);
 
 /*
 [15:38:36] QUERY  Q=2 A=0 AUTH=0 ADD=0
@@ -19,10 +39,11 @@
   +  TXT  IN  TTL=4500  48743c35-ea1a-bf8f-41ee-39096071fa7d._googlezone._tcp.local
   +  PTR  IN  TTL=120  _googlezone._tcp.local
 */
-
-void
-printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer)
+int
+printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
+        struct sockaddr *src_addr)
 {
+    int ret = 0;
     uint16_t transactionID = ntohs(*(uint16_t*)&buffer[0]);
     uint16_t flags = ntohs(*(uint16_t*)&buffer[2]);
     uint16_t questionCount = ntohs(*(uint16_t*)&buffer[4]);
@@ -32,111 +53,72 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer)
     time_t now = time(NULL);
     struct tm local_time;
     char timestamp[20] = {0};
+    char message[MSG_SZ] = {0};
+    char name[MAX_DOMAIN_NAME] = {0};
+    uint16_t pos = HEADER_SZ;
+    uint16_t type, class, i;
+    int msgPos = 0;
+
+    printTerminal output = (printer != NULL) ? printer : puts;
 
     localtime_r(&now, &local_time);
     strftime(timestamp, sizeof(timestamp), "%H:%M:%S", &local_time);
 
-    if (printer == NULL) {
-        return;
-    }
+    /*
+     * DNS Packet header
+     */
+    msgPos += snprintf(message + msgPos, MSG_SZ - msgPos,
+            "[%s] %s  from %s:%d  Q=%d, A=%d, AUTH=%d, ADD=%d\n\r",
+            timestamp,
+            IS_QUERY(flags) ? "QUERY" : "REPLY",
+            (src_addr != NULL) ? inet_ntoa(((struct sockaddr_in*)src_addr)->sin_addr) : "unknown",
+            (src_addr != NULL) ? ntohs(((struct sockaddr_in*)src_addr)->sin_port) : 0,
+            questionCount, answerCount, authorityCount, additionalCount);
 
-    if (additionalCount > 0) {
-        uint16_t pos = HEADER_SZ;
-        for (uint16_t i = 0; i < additionalCount; i++) {
-            char name[MAX_DOMAIN_NAME] = {0};
+    if (questionCount > 0) {
+        for (i = 0; i < questionCount; i++) {
+            name[0] = '\0';
             parseDNSName(buffer, &pos, name);
-            uint16_t type = ntohs(*(uint16_t*)&buffer[pos]);
+            type = ntohs(*(uint16_t*)&buffer[pos]);
             pos += 2;
-            uint16_t class = ntohs(*(uint16_t*)&buffer[pos]);
+            class = ntohs(*(uint16_t*)&buffer[pos]);
             pos += 2;
-            uint32_t ttl = ntohl(*(uint32_t*)&buffer[pos]);
-            pos += 4;
-            uint16_t dataLength = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            /* +  SRV  IN  TTL=120  48743c35-ea1a-bf8f-41ee-39096071fa7d._googlezone._tcp.local */
-            printer("  +  %s%s  TTL=%u %s\n\r",
-                    DNS_TYPE_TO_STRING(type) ? DNS_TYPE_TO_STRING(type) : "UNKNOWN",
-                    DNS_CLASS_TO_STRING(class),
-                    ttl,
-                    name);
-            // Skip the RDATA for now
-            pos += dataLength;
-        }
-    }
-
-    if (authorityCount > 0) {
-        uint16_t pos = HEADER_SZ;
-        for (uint16_t i = 0; i < authorityCount; i++) {
-            char name[MAX_DOMAIN_NAME] = {0};
-            parseDNSName(buffer, &pos, name);
-            uint16_t type = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            uint16_t class = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            uint32_t ttl = ntohl(*(uint32_t*)&buffer[pos]);
-            pos += 4;
-            uint16_t dataLength = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            /* AUTH  PTR  IN  TTL=120  _googlezone._tcp.local */
-            printer("  AUTH  %s%s  TTL=%u %s\n\r",
+            /* Q  PTR  IN  _companion-link._tcp.local */
+            msgPos += snprintf(message + msgPos, MSG_SZ - msgPos,
+                    "  Q  %s%s  %s\n\r",
                     DNS_TYPE_TO_STRING(type),
                     DNS_CLASS_TO_STRING(class),
-                    ttl,
                     name);
-            // Skip the RDATA for now
-            pos += dataLength;
         }
     }
 
     if (answerCount > 0) {
-        uint16_t pos = HEADER_SZ;
-        for (uint16_t i = 0; i < answerCount; i++) {
-            char name[MAX_DOMAIN_NAME] = {0};
-            parseDNSName(buffer, &pos, name);
-            uint16_t type = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            uint16_t class = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            uint32_t ttl = ntohl(*(uint32_t*)&buffer[pos]);
-            pos += 4;
-            uint16_t dataLength = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            /* A  PTR  IN  TTL=120  _googlezone._tcp.local */
-            printer("  A  %s%s  TTL=%u %s\n\r",
-                    DNS_TYPE_TO_STRING(type),
-                    DNS_CLASS_TO_STRING(class),
-                    ttl,
-                    name);
-            // Skip the RDATA for now
-            pos += dataLength;
+        ret = parseReplies(buffer, buflen, &pos, answerCount, message, &msgPos, "A");
+        if (ret < 0) {
+            goto out;
         }
     }
 
-    if (questionCount > 0) {
-        uint16_t pos = HEADER_SZ;
-        for (uint16_t i = 0; i < questionCount; i++) {
-            char name[MAX_DOMAIN_NAME] = {0};
-            parseDNSName(buffer, &pos, name);
-            uint16_t type = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            uint16_t class = ntohs(*(uint16_t*)&buffer[pos]);
-            pos += 2;
-            /* Q  PTR  IN  _companion-link._tcp.local */
-            printer("  Q  %s%s  %s\n\r",
-                    DNS_TYPE_TO_STRING(type),
-                    DNS_CLASS_TO_STRING(class),
-                    name);
+    if (authorityCount > 0) {
+        ret = parseReplies(buffer, buflen, &pos, authorityCount, message, &msgPos, "AUTH");
+        if (ret < 0) {
+            goto out;
         }
     }
 
-    /* 
-     * DNS Packet header
-     */
-    printer("\n\r[%s] %s  Q=%d, A=%d, AUTH=%d, ADD=%d\n\r",
-            timestamp,
-            IS_QUERY(flags) ? "QUERY" : "REPLY",
-            questionCount, answerCount, authorityCount, additionalCount);
+    if (additionalCount > 0) {
+        ret = parseReplies(buffer, buflen, &pos, additionalCount, message, &msgPos, "+");
+        if (ret < 0) {
+            goto out;
+        }
+    }
 
+    msgPos += snprintf(message + msgPos, MSG_SZ - msgPos, "\n\r");
+    output(message);
+    ret = 0;
+
+out:
+    return ret;
 }
 
 void
@@ -183,134 +165,6 @@ buildDnsQuery(const char *name, const DNSType dnsType,
     *buflen = i + 1;
 }
 
-void
-buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen)
-{
-    uint16_t pos = 0;
-    buffer[pos++] = (dnsPacket->header.transactionID >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.transactionID & 0xFF;
-    buffer[pos++] = (dnsPacket->header.flags >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.flags & 0xFF;
-    buffer[pos++] = (dnsPacket->header.questionCount >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.questionCount & 0xFF;
-    buffer[pos++] = (dnsPacket->header.answerCount >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.answerCount & 0xFF;
-    buffer[pos++] = (dnsPacket->header.authorityCount >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.authorityCount & 0xFF;
-    buffer[pos++] = (dnsPacket->header.additionalCount >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->header.additionalCount & 0xFF;
-    
-    char *token = strtok(dnsPacket->questions[0].name, ".");
-    while(token) {
-        int len = strlen(token);
-        buffer[pos++] = (uint8_t)len;
-        memcpy(&buffer[pos], token, len);
-        pos += len;
-        token = strtok(NULL, ".");
-    }
-    buffer[pos++] = 0;
-
-    buffer[pos++] = (dnsPacket->questions[0].type >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->questions[0].type & 0xFF;
-
-    buffer[pos++] = (dnsPacket->questions[0].class >> 8) & 0xFF;
-    buffer[pos++] = dnsPacket->questions[0].class & 0xFF;
-
-    (*buflen) = pos;
-    //DEBUG_DUMP(buffer, (*buflen));
-}
-
-DNSPacket *
-createDNSPacket()
-{
-    DNSPacket (*dnsPacket) = calloc(1, sizeof(DNSPacket));
-    return dnsPacket;
-}
-
-void
-freeDNSPacket(DNSPacket **dnsPacket)
-{
-    if ((*dnsPacket) == NULL)
-        return;
-    for (uint16_t i=0; i < (*dnsPacket)->header.questionCount; i++) {
-        free((*dnsPacket)->questions[i].name);
-    }
-    free((*dnsPacket)->questions);
-    for (uint16_t i=0; i < (*dnsPacket)->header.answerCount; i++) {
-#ifdef DEBUG_TRACE
-        printf("cnt: %d, curr: %d, name: %s, data: %s, addr0: %p, addr1: %p\n\r",
-                (*dnsPacket)->header.answerCount, i,
-                (*dnsPacket)->answers[i].name, 
-                (*dnsPacket)->answers[i].data,
-                (*dnsPacket)->answers[i].name, 
-                (*dnsPacket)->answers[i].data);
-#endif
-        free((*dnsPacket)->answers[i].name);
-        free((*dnsPacket)->answers[i].data);
-    }
-    free((*dnsPacket)->answers);
-    for (uint16_t i=0; i < (*dnsPacket)->header.authorityCount; i++) {
-        free((*dnsPacket)->authorities[i].name);
-        free((*dnsPacket)->authorities[i].data);
-    }
-    free((*dnsPacket)->authorities);
-    for (uint16_t i=0; i < (*dnsPacket)->header.additionalCount; i++) {
-        free((*dnsPacket)->additionals[i].name);
-        free((*dnsPacket)->additionals[i].data);
-    }
-    free((*dnsPacket)->additionals);
-    free((*dnsPacket));
-    *dnsPacket = NULL;
-}
-
-int
-parseTXTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
-{
-    uint16_t txtLen = 0;
-    uint16_t currPos = 0; 
-    uint16_t dataLen = dnsResourceRecord->dataLength;
-    dnsResourceRecord->data = calloc(1, dataLen + 1);
-    do {
-        txtLen = buf[(*pos)];
-        (*pos)++;
-        strncpy(&dnsResourceRecord->data[currPos], (char*)&buf[(*pos)], txtLen); 
-        dataLen -= (txtLen + 1);
-        (*pos) += txtLen;
-        currPos += txtLen;
-    } while (dataLen > 0);
-    return 1;
-}
-
-int
-parseOPTRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
-{
-    uint16_t dataLen = dnsResourceRecord->dataLength;
-    dnsResourceRecord->data = calloc(dataLen + 1, 1);
-    strncpy(dnsResourceRecord->data, (char*)&buf[(*pos)], dataLen);
-    (*pos) += dataLen;
-    return 1;
-}
-
-int
-parseSRVRR(uint8_t *buf, uint16_t *pos, DNSResourceRecord *dnsResourceRecord)
-{
-    uint16_t priority = (buf[(*pos)] << 8) | buf[(*pos) + 1];
-    uint16_t weight = (buf[(*pos) + 2] << 8) | buf[(*pos) + 3];
-    uint16_t port = (buf[(*pos) + 4] << 8) | buf[(*pos) + 5];
-    (*pos) += 6;
-    char target[MAX_DOMAIN_NAME] = {0};
-    if (parseDNSName(buf, pos, target) < 0)
-        return -1;
-    uint16_t n = snprintf(NULL, 0, "priority: %u, weight: %u, port: %u, target: %s",
-            priority, weight, port, target);
-    dnsResourceRecord->data = calloc(1, n+1);
-    if (!dnsResourceRecord->data)
-        return -1;
-    sprintf(dnsResourceRecord->data, "priority: %u, weight: %u, port: %u, target: %s",
-            priority, weight, port, target);    
-
-    return 1;
-}
 
 int
 parseDNSName(uint8_t *buf, uint16_t *pos, char *name)
@@ -342,199 +196,200 @@ parseDNSName(uint8_t *buf, uint16_t *pos, char *name)
     return 1;
 }
 
-int
-parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int buflen)
+/****************************************************************************************/
+static bool
+parseIPv4AddrS(uint8_t *buffer, uint16_t *pos, char *ipv4Str, int maxLen) 
 {
-    uint16_t pos = 0;
-    
-    memcpy(&dnsPacket->header, buf, HEADER_SZ);
-    dnsPacket->header.transactionID = ntohs(dnsPacket->header.transactionID);
-    dnsPacket->header.flags = ntohs(dnsPacket->header.flags);
-    dnsPacket->header.questionCount = ntohs(dnsPacket->header.questionCount);
-    dnsPacket->header.answerCount = ntohs(dnsPacket->header.answerCount);
-    dnsPacket->header.authorityCount = ntohs(dnsPacket->header.authorityCount);
-    dnsPacket->header.additionalCount = ntohs(dnsPacket->header.additionalCount);
-
-    pos += HEADER_SZ;
-
-    dnsPacket->questions = calloc(dnsPacket->header.questionCount, sizeof(DNSQuestion));
-    if (!dnsPacket->questions) {
-        return -1;
-    }
-    if (parseDNSPacketQueries(dnsPacket->questions, 
-            dnsPacket->header.questionCount, buf, &pos) < 0) return -1;
-        
-    dnsPacket->answers = calloc(dnsPacket->header.answerCount, sizeof(DNSResourceRecord));
-    if (!dnsPacket->answers) {
-        return -1;
-    }
-    if (parseDNSPacketResourceRecords(dnsPacket->answers,
-            dnsPacket->header.answerCount, buf, &pos) < 0) return -1;
-
-    dnsPacket->authorities = calloc(dnsPacket->header.authorityCount, sizeof(DNSResourceRecord));
-    if (!dnsPacket->authorities) {
-        return -1;
-    }
-    if (parseDNSPacketResourceRecords(dnsPacket->authorities,
-            dnsPacket->header.authorityCount, buf, &pos) < 0) return -1;
-
-    dnsPacket->additionals = calloc(dnsPacket->header.additionalCount, sizeof(DNSResourceRecord));
-    if (!dnsPacket->additionals) {
-        return -1;
-    }
-    if (parseDNSPacketResourceRecords(dnsPacket->additionals,
-            dnsPacket->header.additionalCount, buf, &pos) < 0) return -1;
-
-    return 1;
+    bool ret = false;
+    if (maxLen < MAX_IPV4_ADDR) {
+        fprintf(stderr, "IPv4 string buffer too small\n");
+        return ret;
+    }                           
+    sprintf(ipv4Str, "%d.%d.%d.%d",
+        (uint8_t)buffer[*pos],
+        (uint8_t)buffer[(*pos)+1],
+        (uint8_t)buffer[(*pos)+2],
+        (uint8_t)buffer[(*pos)+3]);
+    (*pos) += 4;
+    ret = true;
+    return ret;
 }
 
-int
-parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
-        uint16_t cnt, uint8_t *buf, uint16_t *pos)
+static bool
+parseIPv6AddrS(uint8_t *buffer, uint16_t *pos, char *ipv6Str, int maxLen) 
 {
-
-    char name[MAX_DOMAIN_NAME]; 
-
-    for (uint16_t i = 0; i < cnt; i++) {
-
-        DNSResourceRecord *dnsResourceRecord = &dnsResourceRecords[i];
-        
-        memset(name, 0, MAX_DOMAIN_NAME);
-        if (!parseDNSName(buf, pos, name)) {
-            return -1;
-        }
-        dnsResourceRecord->name = strdup(name);
-        if (!dnsResourceRecord->name) {
-            fprintf(stderr, "query name error\n");
-            return -1;
-        }
-
-        memcpy(&dnsResourceRecord->type, &buf[(*pos)], sizeof(uint16_t));
-        dnsResourceRecord->type = ntohs(dnsResourceRecord->type);
-        (*pos) += sizeof(uint16_t);
-
-        memcpy(&dnsResourceRecord->class, &buf[(*pos)], sizeof(uint16_t));
-        dnsResourceRecord->class = ntohs(dnsResourceRecord->class);
-        (*pos) += sizeof(dnsResourceRecord->class);
-
-        memcpy(&dnsResourceRecord->ttl, &buf[(*pos)], sizeof(uint32_t));
-        dnsResourceRecord->ttl = ntohl(dnsResourceRecord->ttl);
-        (*pos) += sizeof(uint32_t);
-
-        memcpy(&dnsResourceRecord->dataLength, &buf[(*pos)], sizeof(uint16_t));
-        dnsResourceRecord->dataLength = ntohs(dnsResourceRecord->dataLength);
-        (*pos) += sizeof(uint16_t);
-
-        if (dnsResourceRecord->type == 0 || dnsResourceRecords->class == 0 || 
-                dnsResourceRecords->dataLength == 0) {
-            fprintf(stderr, "type: %d, class: %d, ttl: %d, len: %d, attrs error\n",
-                    dnsResourceRecord->type,
-                    dnsResourceRecord->class,
-                    dnsResourceRecord->ttl,
-                    dnsResourceRecord->dataLength);
-            return -1;
-        }    
-        switch (dnsResourceRecord->type) {
-            case SRV:
-                if (!parseSRVRR(buf, pos, dnsResourceRecord))
-                    return -1;
-                break;
-            case TXT:
-                if (!parseTXTRR(buf, pos, dnsResourceRecord))
-                    return -1;
-                break;
-            case PTR:
-            case CNAME:
-                memset(name, 0, MAX_DOMAIN_NAME);
-                if (!parseDNSName(buf, pos, name)) {
-                    fprintf(stderr, "CNME, PTR error\n");
-                    return -1;
-                }
-                dnsResourceRecord->data = strdup(name);
-                if (!dnsResourceRecord->data) {
-                    return -1;
-                }
-                break;
-            case A:
-                if (!parseIPv4Addr(buf, pos, dnsResourceRecord)) {
-                    fprintf(stderr, "IPv4 error\n");
-                    return -1;
-                }
-                break;
-            case AAAA:
-                if (!parseIPv6Addr(buf, pos, dnsResourceRecord)) {
-                    fprintf(stderr, "IPv6 error\n");
-                    return -1;
-                }
-                break;
-            case OPT:
-                if (!parseOPTRR(buf, pos, dnsResourceRecord))
-                    return -1;
-                break;
-            default:
-                (*pos) += dnsResourceRecord->dataLength;
-                break;
-        }
+    bool ret = false;
+    int j = 0, k = 0;
+    if (maxLen < MAX_IPV6_ADDR) {
+        fprintf(stderr, "IPv6 string buffer too small\n");
+        return ret;
     }
-
-    return 1;
-}
-
-int
-parseDNSPacketQueries(DNSQuestion *dnsQuestions, uint16_t cnt,
-        uint8_t *buf, uint16_t *pos) 
-{
-
-    char name[MAX_DOMAIN_NAME]; 
-    for (uint16_t i = 0; i < cnt; i++) {
-
-        DNSQuestion *dnsQuestion = &dnsQuestions[i];
-        
-        memset(name, 0, MAX_DOMAIN_NAME);
-        if (!parseDNSName(buf, pos, name)) {
-            return -1;
-        }
-
-        dnsQuestion->name = strdup(name);
-        if (!dnsQuestion->name) {
-            return -1;
-        }
-
-        memcpy(&dnsQuestion->type, &buf[(*pos)], sizeof(uint16_t));
-        dnsQuestion->type = ntohs(dnsQuestion->type);
-        (*pos) += sizeof(uint16_t);
-
-        memcpy(&dnsQuestion->class, &buf[(*pos)], sizeof(uint16_t));
-        dnsQuestion->class = ntohs(dnsQuestion->class);
-        (*pos) += sizeof(dnsQuestion->class);    
-    }
-
-    return 1;
-}
-
-int 
-parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) 
-{
-    dnsResourceRecord->data = calloc(MAX_IPV6_ADDR, 1);
-    int k = 0;                            
-    for (int j=0; j<8; j++) {             
-        k += sprintf(&dnsResourceRecord->data[k], "%02x%02x:", buffer[*pos], buffer[(*pos)+1]);
+    for (j = 0; j < 8; j++) {             
+        k += sprintf(ipv6Str + k, "%02x%02x:",
+                (uint8_t)buffer[*pos], (uint8_t)buffer[(*pos)+1]);
         (*pos) += 2;                          
-    }                                
-    dnsResourceRecord->data[k-1] = 0;
-    return 1;
+    }
+    ipv6Str[k-1] = 0;
+    ret = true;
+    return ret;
 }
 
-int 
-parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord) 
+static void
+parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLength,
+        char *message, int *msgPos)
 {
-    dnsResourceRecord->data = calloc(MAX_IPV4_ADDR, 1);
-    int k = 0;                            
-    for (int j=0; j<4; j++) {             
-        k += sprintf(&dnsResourceRecord->data[k], "%d.", (unsigned char)buffer[*pos]);
-        (*pos)++;                          
-    }                                
-    dnsResourceRecord->data[k-1] = 0;
+    char ipv4s[MAX_IPV4_ADDR] = {0};
+    char ipv6s[MAX_IPV6_ADDR] = {0};
+    char name[MAX_DOMAIN_NAME] = {0};
+    switch (type) {
+    case PTR:
+    case CNAME:
+        if (!parseDNSName(buffer, pos, name)) {
+            fprintf(stderr, "Failed to parse DNS name\n");
+        } else {
+            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+                    "       -> %s\n\r", name);
+        }
+        break;
+    case A:
+        if (!parseIPv4AddrS(buffer, pos, ipv4s, sizeof(ipv4s))) {
+            fprintf(stderr, "Failed to parse IPv4 address\n");
+        } else {
+            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+                    "       -> %s\n\r", ipv4s);
+        }
+        break;
+    case AAAA:
+        if (!parseIPv6AddrS(buffer, pos, ipv6s, sizeof(ipv6s))) {
+            fprintf(stderr, "Failed to parse IPv6 address\n");
+        } else {
+            *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+                    "       -> %s\n\r", ipv6s);
+        }
+        break;
+    case SRV:
+        parseSRV(buffer, pos, message, msgPos);
+        break;
+    case NSEC:
+    default:
+        *pos += dataLength;
+        break;
+    }
+}
+
+static int
+parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
+        char *message, int *msgPos, const char *label)
+{
+    int ret = 0;
+    uint16_t i = 0;
+    char name[MAX_DOMAIN_NAME] = {0};
+    uint16_t type, rawClass, class, dataLength;
+    uint32_t ttl;
+
+    for (i = 0; i < count; i++) {
+        name[0] = '\0';
+        parseDNSName(buffer, pos, name);
+        type = ntohs(*(uint16_t*)&buffer[*pos]);
+        *pos += 2;
+        class = ntohs(*(uint16_t*)&buffer[*pos]);
+        *pos += 2;
+        ttl = ntohl(*(uint32_t*)&buffer[*pos]);
+        *pos += 4;
+        dataLength = ntohs(*(uint16_t*)&buffer[*pos]);
+        *pos += 2;
+
+        if (strcmp(DNS_TYPE_TO_STRING(type), "UNKNOWN") == 0) {
+            // printToMessageBox("Unknown DNS type: %u\n\r", type);
+            // debug_dump(buffer, buflen, printToMessageBox);
+            // ret = -1;
+            // goto out;
+        }
+
+        if (strcmp(DNS_CLASS_TO_STRING(class), "UNKNOWN") == 0) {
+            // name[0] = 0;
+            // printToMessageBox("pos before: %d\n", tmp);
+            // parseDNSName(buffer, &tmp, name);
+            // printToMessageBox("Name: %s, pos: %u\n\r", name, tmp);
+            // uint16_t type =
+            //     ((uint16_t)buffer[tmp] << 8) |
+            //     buffer[tmp + 1];
+            // printToMessageBox("Type bytes: %02x %02x\n\r",
+            //                 buffer[tmp], buffer[tmp + 1]);
+            // tmp += 2;
+            // printToMessageBox("After type: pos=%u\n\r", tmp);
+            // uint16_t rawClass =
+            //     ((uint16_t)buffer[tmp] << 8) |
+            //     buffer[tmp + 1];
+            // printToMessageBox("Class bytes: %02x %02x\n\r",
+            //                 buffer[tmp], buffer[tmp + 1]);
+            // printToMessageBox("Raw class: 0x%04x\n\r", rawClass);
+            // debug_dump(buffer, buflen, printToMessageBox);
+            // ret = -1;
+            // goto out;
+        }
+
+        *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+                "  %s  %s%s  TTL=%u %s\n\r",
+                label,
+                DNS_TYPE_TO_STRING(type),
+                DNS_CLASS_TO_STRING(class),
+                ttl,
+                name);
+        parseResourceRecords(buffer, pos, type, dataLength, message,
+            msgPos);
+    }
+    ret = 0;
+
+out:
+    return ret;
+}
+
+static int
+parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
+        int *msgPos)
+{
+    char target[MAX_DOMAIN_NAME] = {0};
+    uint16_t priority = (buffer[(*pos)] << 8) | buffer[(*pos) + 1];
+    uint16_t weight = (buffer[(*pos) + 2] << 8) | buffer[(*pos) + 3];
+    uint16_t port = (buffer[(*pos) + 4] << 8) | buffer[(*pos) + 5];
+    (*pos) += 6;
+    if (parseDNSName(buffer, pos, target) < 0)
+        return -1;
+    *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos,
+            "       -> %u %u %u %s\n\r",
+            priority, weight, port, target);    
     return 1;
 }
 
+static void
+debug_dump(uint8_t *buf, int n, outputFunc output)
+{
+    int i = 0, cnt = 0;
+    if (buf == NULL || n <= 0)
+        return;
+    char msg[n * 3 + n / 8 + n / 16 + 2];
+    size_t pos = 0;
+    size_t len = sizeof(msg);
+    outputFunc out = (output != NULL) ? output : printf;
+    msg[0] = 0;
+    for (i = 0; i < n; i++) {
+        pos += snprintf(msg + pos, len - pos, "%02x ", buf[i]);
+        cnt++;  
+        if (cnt % 8 == 0)
+            pos += snprintf(msg + pos, len - pos, " ");
+        if (cnt % 16 == 0)
+            pos += snprintf(msg + pos, len - pos, "\n");
+    }    
+    if (cnt % 16 != 0)
+        snprintf(msg + pos, len - pos, "\n");
+    out("%s", msg);
+}
+
+static inline void
+addToMsg(char *message, int *msgPos, const char *format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    *msgPos += snprintf(message + *msgPos, MSG_SZ - *msgPos, format, args);
+}

@@ -3,11 +3,12 @@
 
 #include <curses.h>
 
-#include "dns.h"
+// #include "dns.h"
 
 void *interactive(void *arg);
-void printToWindow(const char *format, ...);
-void printDnsPacket(DNSPacket *dnsPacket, printTerminal printTerminal);
+int printToWindow(const char *msg);
+int printToMessageBox(const char *format, ...);
+// void printDnsPacket(DNSPacket *dnsPacket, printTerminal printTerminal);
 
 #endif
 
