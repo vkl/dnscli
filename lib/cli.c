@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <pthread.h> 
 #include <unistd.h>
@@ -10,6 +11,7 @@
 #include <ncurses.h>
 
 #include "cli.h"
+#include "dns.h"
 // #include "dns.h"
 
 #define BUFF_SZ 1024
@@ -41,11 +43,42 @@ static struct Stat stat = { .r = 0, .q = 0, .ru = 0 };
 
 uint8_t requestbuf[BUFF_SZ] = {0};
 
+#define ITEMS_SZ 64
+
+
+/* static */
+
+struct Item {
+    int pos;
+    uint8_t *rawPacket;
+    size_t len;
+    struct Item *next;
+    struct Item *prev;
+};
+
+enum ItemPos {
+    deselect,
+    next,
+    prev
+};
+
+static struct Item *head;
+static volatile int height;
+static volatile int width;
+
 static void
 handle_resize(int signal)
 {
     terminal_resized = 1;
 }
+
+static void initItem(struct Item **item);
+static void deinitItem(struct Item **item);
+static void addItem(uint8_t *rawPacket, size_t len, int pos);
+static void debugItems();
+static void selectItem(struct Item **current, enum ItemPos p);
+
+/* static end */
 
 int
 printToMessageBox(const char *format, ...)
@@ -56,30 +89,25 @@ printToMessageBox(const char *format, ...)
     if (messagebox == NULL || format == NULL) {
         return 0;
     }
-
     va_start(args, format);
     n = vw_printw(messagebox, format, args);
     va_end(args);
-
     wrefresh(messagebox);
 
     return n;
 }
 
 int
-printToWindow(const char *msg)
+printToWindow(const char *msg, int lines,
+    uint8_t *rawPacket, size_t len)
 {
-    int n = 0;
-    // int lines = 0;
-    // const char *nline = NULL;
-    // nline = strchr(msg, '\n');
-    // while (nline != NULL) {
-    //     lines++;
-    //     nline = strchr(nline + 1, '\n');
-    // }
-    n = waddstr(result, msg);
+    int i, n = 0;
+    wmove(result, 0, 0);
+    winsdelln(result, lines);
+    n = mvwprintw(result, 0, 0, "%s", msg);
     wrefresh(result);
-
+    addItem(rawPacket, len, lines);
+    // debugItems();
     return n;
 }
 
@@ -133,7 +161,9 @@ interactive(void *arg)
     int columns = 0;
     bool isPaused = false;
     int curr_line = 0;
-    int width, height, ypos = 0;
+    struct Item *current = NULL;
+
+    initItem(&head);
 
     initscr();
     cbreak();
@@ -150,13 +180,15 @@ interactive(void *arg)
     }
 
     getmaxyx(stdscr, rows, columns);
-    help = newwin(1, columns / 2, 0, 0);
-    query = newwin(1, columns / 2, 2, 0);
-    status = newwin(1, columns / 2, 1, 0);
-    result = newwin(rows - 6, columns / 2, 4, 0);
-    messagebox = newwin(rows, columns / 2, 0, columns / 2);
+    help =         newwin(1, columns / 2, 0, 0);
+    status =       newwin(1, columns / 2, 1, 0);
+    query =        newwin(1, columns / 2, 2, 0);
+
+    result =       newwin(rows - 6, columns / 2, 4, 0);
     statusBottom = newwin(2, columns / 2, rows - 2, 0);
 
+    messagebox =   newwin(rows, columns / 2, 0, columns / 2);
+    
     width = getmaxx(result);
     height = getmaxy(result);
 
@@ -180,6 +212,8 @@ interactive(void *arg)
     sigemptyset(&action.sa_mask);
     sigaction(SIGWINCH, &action, NULL);
 
+    // updateBottomStatus(10, 10, 10);
+
     for (;;) {
 
         if (terminal_resized) {
@@ -192,24 +226,18 @@ interactive(void *arg)
         key = wgetch(query);
 
         if (start == 0) {
-            printToMessageBox("result: %d %d, press %02x\n", height, width, key);
+            //printToMessageBox("result: %d %d, press %02x\n", height, width, key);
             switch (key) {
                 case 'q': // quit
                     goto done;
                     break;
                 case KEY_DOWN:
-                    mvwchgat(result, ypos, 0, width, 0, 0, NULL);
-                    ypos++;
-                    if (ypos >= (height - 1)) ypos = height - 1;
-                    mvwchgat(result, ypos, 0, width, 0, COLOR_SELECT, NULL);
-                    wrefresh(result);
+                    if (!isPaused) break;
+                    selectItem(&current, next);
                     break;
                 case KEY_UP:
-                    mvwchgat(result, ypos, 0, width, 0, 0, NULL);
-                    ypos--;
-                    if (ypos <= 0) ypos = 0;
-                    mvwchgat(result, ypos, 0, width, 0, COLOR_SELECT, NULL);
-                    wrefresh(result);
+                    if (!isPaused) break;
+                    selectItem(&current, prev);
                     break;
                 case 'r': // send request
                     i = 0;
@@ -226,6 +254,7 @@ interactive(void *arg)
                     signal = (uint64_t)key;
                     write(efd, &signal, sizeof(signal));
                     isPaused = !isPaused;
+                    selectItem(&current, isPaused ? next : deselect);
                     werase(status);
                     mvwprintw(status, 0, 0,
                             "Status: %s", isPaused ? "Paused" : "Running");
@@ -234,6 +263,11 @@ interactive(void *arg)
                 case 'c': // clear screen
                     werase(result);
                     wrefresh(result);
+                    werase(messagebox);
+                    wrefresh(messagebox);
+                    deinitItem(&head);
+                    initItem(&head);
+                    current = NULL;
                     break;
                 default:
                     break;
@@ -280,6 +314,7 @@ done:
     delwin(status);
     delwin(messagebox);
     endwin();
+    deinitItem(&head);
 
     return NULL;
 }
@@ -293,4 +328,114 @@ updateBottomStatus(int r, int q, int ru)
     mvwprintw(statusBottom, 0, 0, "R: %d Q: %d RU: %d",
             stat.r, stat.q, stat.ru);
     wrefresh(statusBottom);
+}
+
+static void
+initItem(struct Item **item)
+{
+    *item = malloc(sizeof(struct Item));
+    if (*item == NULL) {
+        perror("memory error");
+        goto out;
+    }
+    (*item)->pos = -1;
+    (*item)->next = NULL;
+    (*item)->prev = NULL;
+
+out:
+    return;
+}
+
+static void
+deinitItem(struct Item **item)
+{
+    struct Item *tmp = NULL;
+    while (((*item)) != NULL) {
+        tmp = (*item)->next;
+        free(*item);
+        *item = tmp;
+    }
+}
+
+static void
+addItem(uint8_t *rawPacket, size_t len, int pos)
+{
+    struct Item *tmp = NULL;
+    struct Item *prev = NULL;
+    if (head == NULL) {
+        goto out;
+    }
+    if (head->pos == -1) {
+        head->pos = 0;
+        head->rawPacket = rawPacket;
+        head->len = len;
+    } else {
+        tmp = malloc(sizeof(struct Item));
+        tmp->pos = 0;
+        tmp->rawPacket = rawPacket;
+        tmp->len = len;
+        tmp->next = head;
+        head = tmp;
+        head->prev = NULL;
+        head->next->prev = head;
+        prev = head;
+
+        tmp = head->next;
+        while (tmp != NULL) {
+            tmp->pos += pos;
+
+            /* free all next items */
+            if (tmp->pos > height) {
+                deinitItem(&tmp);
+                tmp = NULL;
+                prev->next = NULL;
+                break;
+            }
+
+            prev = tmp;
+            tmp = tmp->next;
+        }
+    }
+
+out:
+    return;
+}
+
+static void
+debugItems()
+{
+    struct Item *tmp = head;
+    wclear(messagebox);
+    while(tmp != NULL) {
+        printToMessageBox("item: %p, pos: %d\n", tmp, tmp->pos);
+        tmp = tmp->next;
+    }
+}
+
+static void
+selectItem(struct Item **current, enum ItemPos p)
+{
+    if ((*current) != NULL && p == deselect) {
+        mvwchgat(result, (*current)->pos, 0, width, 0, 0, NULL);
+        *current = NULL;
+        wclear(messagebox);
+        goto out;
+    }
+
+    if (*current == NULL) {
+        *current = head;
+    } else if (((*current)->next != NULL) && (p == next)) {
+        mvwchgat(result, (*current)->pos, 0, width, 0, 0, NULL);
+        *current = (*current)->next;
+    } else if (((*current)->prev != NULL) && (p == prev)) {
+        mvwchgat(result, (*current)->pos, 0, width, 0, 0, NULL);
+        *current = (*current)->prev;
+    }
+    wclear(messagebox);
+    mvwchgat(result, (*current)->pos, 0, width, 0, COLOR_SELECT, NULL);
+    debug_dump((*current)->rawPacket, (*current)->len, printToMessageBox);
+
+out:
+    wrefresh(result);
+    wrefresh(messagebox);
 }

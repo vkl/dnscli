@@ -21,7 +21,7 @@ int efd;
 
 #define BUFF_SZ 1024
 #define RING_SZ 128
-#define PKT_SZ 1024
+#define PKT_SZ 2048
 
 extern uint8_t requestbuf[BUFF_SZ];
 
@@ -174,12 +174,15 @@ monitor(void *arg)
             if (n > 0) {
                 pkt->len = n;
                 ring_produce(&ring);
-            }
-            pktConsumer = ring_consumer_slot(&ring);
-            ring_consume(&ring);
-            if (printRawDnsPacket(pktConsumer->data, pktConsumer->len, printToWindow,
-                    (struct sockaddr*)&src_addr) < 0) {
-                goto done;
+                pktConsumer = ring_consumer_slot(&ring);
+                if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
+                        printToWindow,
+                        (struct sockaddr*)&src_addr) < 0) {
+                    goto done;
+                }
+                uint16_t flags = ((uint16_t)pktConsumer->data[0] << 8) | pktConsumer->data[1];
+                updateBottomStatus(!IS_QUERY(flags), IS_QUERY(flags), 1);
+                ring_consume(&ring);
             }
         }
 

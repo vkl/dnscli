@@ -1,3 +1,4 @@
+#include <netinet/in.h>
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
@@ -57,6 +58,8 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
     int timeout = 50;
     ssize_t n = 0;
     struct sockaddr_in sin;
+    struct sockaddr_in cin;
+    socklen_t len;
     uint8_t buf[BUF_SZ] = {0};
 
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
@@ -73,13 +76,21 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
         fprintf(stderr, "invalid remote IP %s\n", srv);
         goto out;
     }
-    
+
     if (connect(fd, (struct sockaddr*)&sin, sizeof(sin)) == -1) {
         perror("connect error");
         goto out;
     }
+
+    len = sizeof(cin);
+    if (getsockname(fd, (struct sockaddr *)&cin, &len) == -1) {
+        perror("getsockname");
+        goto out;
+    }
+
     printf("Sending %d bytes to %s:%d\n", msgLen, srv, port);    
-    DEBUG_DUMP(msg, msgLen);
+    debug_dump(msg, msgLen, NULL);
+    printRawDnsPacket(msg, msgLen, NULL, (struct sockaddr*)&cin);
     if ( (rc = write(fd, msg, msgLen)) != msgLen) {
         perror("write error");
         goto out;
@@ -100,7 +111,7 @@ sendMsg(const char *srv, const int port, uint8_t *msg, uint16_t msgLen)
             }
         } else {
             printf("\n\rReceived %zd bytes from %s\n\r", n, srv);
-            DEBUG_DUMP(buf, n);
+            debug_dump(buf, n, NULL);
             printRawDnsPacket(buf, n, NULL, (struct sockaddr*)&sin);
             break;
         }

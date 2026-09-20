@@ -9,9 +9,7 @@
 #include "dns.h"
 #include "cli.h"
 
-#define MSG_SZ 1024
-
-typedef int (*outputFunc)(const char *, ...);
+#define MSG_SZ 2048
 
 /* static variables */
 
@@ -22,11 +20,10 @@ static bool parseIPv6AddrS(uint8_t *buffer, uint16_t *pos, char *ipv6Str,
         int maxLen);
 static int parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
         int *msgPos);
-static void parseResourceRecords(uint8_t *buffer, uint16_t *pos,
+static int parseResourceRecords(uint8_t *buffer, uint16_t *pos,
         DNSType type, int dataLength, char *message, int *msgPos);
 static int parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
         char *message, int *msgPos, const char *label);
-static void debug_dump(uint8_t *buf, int n, outputFunc output);
 static inline void addToMsg(char *message, int *msgPos, const char *format, ...);
 
 /*
@@ -58,9 +55,8 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
     char name[MAX_DOMAIN_NAME] = {0};
     uint16_t pos = HEADER_SZ;
     uint16_t type, class, i;
+    int lines = 0;
     int msgPos = 0;
-
-    printTerminal output = (printer != NULL) ? printer : puts;
 
     localtime_r(&now, &local_time);
     strftime(timestamp, sizeof(timestamp), "%H:%M:%S", &local_time);
@@ -77,6 +73,7 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
             (src_addr != NULL) ? inet_ntoa(((struct sockaddr_in*)src_addr)->sin_addr) : "unknown",
             (src_addr != NULL) ? ntohs(((struct sockaddr_in*)src_addr)->sin_port) : 0,
             questionCount, answerCount, authorityCount, additionalCount);
+    lines++;
 
     if (questionCount > 0) {
         for (i = 0; i < questionCount; i++) {
@@ -92,36 +89,31 @@ printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
                     DNS_TYPE_TO_STRING(type),
                     DNS_CLASS_TO_STRING(class),
                     name);
+            lines++;
         }
     }
 
     if (answerCount > 0) {
-        ret = parseReplies(buffer, buflen, &pos, answerCount, message, &msgPos, "A");
-        if (ret < 0) {
-            goto out;
-        }
+        lines += parseReplies(buffer, buflen, &pos, answerCount, message, &msgPos, "A");
     }
 
     if (authorityCount > 0) {
-        ret = parseReplies(buffer, buflen, &pos, authorityCount, message, &msgPos, "AUTH");
-        if (ret < 0) {
-            goto out;
-        }
+        lines += parseReplies(buffer, buflen, &pos, authorityCount, message, &msgPos, "AUTH");
     }
 
     if (additionalCount > 0) {
-        ret = parseReplies(buffer, buflen, &pos, additionalCount, message, &msgPos, "+");
-        if (ret < 0) {
-            goto out;
-        }
+        lines += parseReplies(buffer, buflen, &pos, additionalCount, message, &msgPos, "+");
     }
 
     addToMsg(message, &msgPos, "\n\r");
-    output(message);
-    ret = 0;
+    lines++;
+    if (printer != NULL) {
+        printer(message, lines, buffer, buflen);
+    } else {
+        puts(message);
+    }
 
-out:
-    return ret;
+    return 0;
 }
 
 void
@@ -237,10 +229,11 @@ parseIPv6AddrS(uint8_t *buffer, uint16_t *pos, char *ipv6Str, int maxLen)
     return ret;
 }
 
-static void
+static int
 parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLength,
         char *message, int *msgPos)
 {
+    int lines = 0;
     char ipv4s[MAX_IPV4_ADDR] = {0};
     char ipv6s[MAX_IPV6_ADDR] = {0};
     char name[MAX_DOMAIN_NAME] = {0};
@@ -251,6 +244,7 @@ parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLengt
             fprintf(stderr, "Failed to parse DNS name\n");
         } else {
             addToMsg(message, msgPos, "       -> %s\n\r", name);
+            lines++;
         }
         break;
     case A:
@@ -258,6 +252,7 @@ parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLengt
             fprintf(stderr, "Failed to parse IPv4 address\n");
         } else {
             addToMsg(message, msgPos, "       -> %s\n\r", ipv4s);
+            lines++;
         }
         break;
     case AAAA:
@@ -265,23 +260,25 @@ parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLengt
             fprintf(stderr, "Failed to parse IPv6 address\n");
         } else {
             addToMsg(message, msgPos, "       -> %s\n\r", ipv6s);
+            lines++;
         }
         break;
     case SRV:
-        parseSRV(buffer, pos, message, msgPos);
+        lines += parseSRV(buffer, pos, message, msgPos);
         break;
     case NSEC:
     default:
         *pos += dataLength;
         break;
     }
+    return lines;
 }
 
 static int
 parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
         char *message, int *msgPos, const char *label)
 {
-    int ret = 0;
+    int lines = 0;
     uint16_t i = 0;
     char name[MAX_DOMAIN_NAME] = {0};
     uint16_t type, rawClass, class, dataLength;
@@ -336,13 +333,13 @@ parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
                 DNS_CLASS_TO_STRING(class),
                 ttl,
                 name);
-        parseResourceRecords(buffer, pos, type, dataLength, message,
+        lines++;
+        lines += parseResourceRecords(buffer, pos, type, dataLength, message,
             msgPos);
     }
-    ret = 0;
 
 out:
-    return ret;
+    return lines;
 }
 
 static int
@@ -355,33 +352,38 @@ parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
     uint16_t port = (buffer[(*pos) + 4] << 8) | buffer[(*pos) + 5];
     (*pos) += 6;
     if (parseDNSName(buffer, pos, target) < 0)
-        return -1;
+        return 0;
     addToMsg(message, msgPos, "       -> %u %u %u %s\n\r",
             priority, weight, port, target);    
     return 1;
 }
 
-static void
+void
 debug_dump(uint8_t *buf, int n, outputFunc output)
 {
+    uint16_t addr = 0;
     int i = 0, cnt = 0;
     if (buf == NULL || n <= 0)
         return;
-    char msg[n * 3 + n / 8 + n / 16 + 2];
+    char msg[n * 3 + n / 8 + n / 16 + 2 + (8 * n / 16) + 8];
     size_t pos = 0;
     size_t len = sizeof(msg);
     outputFunc out = (output != NULL) ? output : printf;
     msg[0] = 0;
     for (i = 0; i < n; i++) {
+        if (cnt % 16 == 0)
+            pos += snprintf(msg + pos, len - pos, "0x%04x: ", addr);
         pos += snprintf(msg + pos, len - pos, "%02x ", buf[i]);
         cnt++;  
         if (cnt % 8 == 0)
             pos += snprintf(msg + pos, len - pos, " ");
-        if (cnt % 16 == 0)
+        if (cnt % 16 == 0) {
             pos += snprintf(msg + pos, len - pos, "\n");
+            addr += 16;
+        }
     }    
     if (cnt % 16 != 0)
-        snprintf(msg + pos, len - pos, "\n");
+        snprintf(msg + pos, len - pos, "\n\n");
     out("%s", msg);
 }
 

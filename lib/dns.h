@@ -42,7 +42,9 @@ typedef enum DNSClass {
     HS = 4      // Hesiod [Dyer 87]
 } DNSClass;
 
-typedef int (*printTerminal)(const char *msg);
+typedef int (*printTerminal)(const char *msg, int lines,
+        uint8_t *rawPacket, size_t len);
+typedef int (*outputFunc)(const char *, ...);
 
 #define STR_TO_DNS_TYPE(s) \
     strcmp("A", s) == 0 ? A : \
@@ -147,5 +149,6 @@ void buildDnsQuery(const char *name, DNSType dnsType, uint8_t **buffer, int *buf
 int parseDNSName(uint8_t *buf, uint16_t *pos, char *name);
 int printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
         struct sockaddr *src_addr);
+void debug_dump(uint8_t *buf, int n, outputFunc output);
 
 #endif
