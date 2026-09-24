@@ -1,3 +1,4 @@
+#include <curses.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -23,10 +24,16 @@
 
 #define HELP_MSG "Press 'q' to quit, 'r' to send request, 'p' to pause/resume, 'c' to clear screen"
 
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+
 struct Stat {
     int q;
     int r;
     int ru;
+};
+
+struct Node {
+    command cmd;
 };
 
 extern int efd;
@@ -38,13 +45,12 @@ static WINDOW *help;
 static WINDOW *status;
 static WINDOW *messagebox;
 static WINDOW *statusBottom;
-
 static struct Stat stat = { .r = 0, .q = 0, .ru = 0 };
+static struct Node node = { .cmd = NULL };
 
 uint8_t requestbuf[BUFF_SZ] = {0};
 
 #define ITEMS_SZ 64
-
 
 /* static */
 
@@ -65,6 +71,11 @@ enum ItemPos {
 static struct Item *head;
 static volatile int height;
 static volatile int width;
+static bool isPaused = false;
+static bool isRequestMode = false;
+static uint64_t control = 0;
+static struct Item *current = NULL;
+static uint16_t i = 0;
 
 static void
 handle_resize(int signal)
@@ -77,9 +88,14 @@ static void deinitItem(struct Item **item);
 static void addItem(uint8_t *rawPacket, size_t len, int pos);
 static void debugItems();
 static void selectItem(struct Item **current, enum ItemPos p);
+static void cmdPause();
+static void cmdResume();
+static void cmdClrScr();
+static void cmdRequestMode();
+static void cmdSendRequest();
+static int requestMode(int key);
 
 /* static end */
-
 int
 printToMessageBox(const char *format, ...)
 {
@@ -107,7 +123,7 @@ printToWindow(const char *msg, int lines,
     n = mvwprintw(result, 0, 0, "%s", msg);
     wrefresh(result);
     addItem(rawPacket, len, lines);
-    // debugItems();
+    debugItems();
     return n;
 }
 
@@ -151,17 +167,12 @@ out:
 void *
 interactive(void *arg)
 {
-    uint64_t signal = 0;
     uint16_t buflen = 0;
-    uint16_t i = 0;
-    uint8_t start = 0;
     int key = 0;
     struct winsize terminal_size;
     int rows = 0;
     int columns = 0;
-    bool isPaused = false;
     int curr_line = 0;
-    struct Item *current = NULL;
 
     initItem(&head);
 
@@ -184,7 +195,7 @@ interactive(void *arg)
     status =       newwin(1, columns / 2, 1, 0);
     query =        newwin(1, columns / 2, 2, 0);
 
-    result =       newwin(rows - 6, columns / 2, 4, 0);
+    result =       newwin(rows - 7, columns / 2, 4, 0);
     statusBottom = newwin(2, columns / 2, rows - 2, 0);
 
     messagebox =   newwin(rows, columns / 2, 0, columns / 2);
@@ -225,87 +236,36 @@ interactive(void *arg)
 
         key = wgetch(query);
 
-        if (start == 0) {
-            //printToMessageBox("result: %d %d, press %02x\n", height, width, key);
-            switch (key) {
-                case 'q': // quit
-                    goto done;
-                    break;
-                case KEY_DOWN:
-                    if (!isPaused) break;
-                    selectItem(&current, next);
-                    break;
-                case KEY_UP:
-                    if (!isPaused) break;
-                    selectItem(&current, prev);
-                    break;
-                case 'r': // send request
-                    i = 0;
-                    start = 1;
-                    memset(requestbuf, 0, BUFF_SZ);
-                    curs_set(1);
-                    werase(query);
-                    wmove(query, 0, 0);
-                    winsdelln(query, 1);
-                    mvwprintw(query, 0, 0, "Request: ");
-                    wrefresh(query);
-                    break;
-                case 'p': // pause/resume
-                    signal = (uint64_t)key;
-                    write(efd, &signal, sizeof(signal));
-                    isPaused = !isPaused;
-                    selectItem(&current, isPaused ? next : deselect);
-                    werase(status);
-                    mvwprintw(status, 0, 0,
-                            "Status: %s", isPaused ? "Paused" : "Running");
-                    wrefresh(status);
-                    break;
-                case 'c': // clear screen
-                    werase(result);
-                    wrefresh(result);
-                    werase(messagebox);
-                    wrefresh(messagebox);
-                    deinitItem(&head);
-                    initItem(&head);
-                    current = NULL;
-                    break;
-                default:
-                    break;
+        if (isRequestMode) {
+            if (requestMode(key) < 0) {
+                control = (uint64_t)key;
+                write(efd, &control, sizeof(control));
             }
-            continue;
-        }
-        
-        if ((key == '\r') || (key == '\n')) {
-            curs_set(0);
-            requestbuf[i] = '\0';
-            signal = 'r';
-            write(efd, &signal, sizeof(signal));
-            start = 0;
             continue;
         }
 
-        if ((key == KEY_BACKSPACE) || (key == 127) || (key == 8)) {
-            if (i > 0) {
-                i--;
-                requestbuf[i] = '\0';
-                wmove(query, 0, 9 + i);
-                waddch(query, ' ');
-                wmove(query, 0, 9 + i);
-                wrefresh(query);
-            }
-        } else if (key >= 32 && key <= 126) {
-            if (i < sizeof(requestbuf) - 1) {
-                requestbuf[i++] = (char)key;
-                requestbuf[i] = '\0';
-                waddch(query, key);
-                wrefresh(query);
-            }
+        switch (key) {
+            case 'a':
+            case 'p': // pause/resume
+            case 'c': // clear screen
+            case 'r': // enter request mode
+            case KEY_DOWN:
+            case KEY_UP:
+                control = (uint64_t)key;
+                write(efd, &control, sizeof(control));
+                break;
+            case 'q': // quit
+                goto done;
+                break;
+            default:
+                break;
         }
+
     }
 
 done:
-    signal = (uint64_t)key;
-    write(efd, &signal, sizeof(signal));
+    control = (uint64_t)key;
+    write(efd, &control, sizeof(control));
 
     delwin(result);
     delwin(result_frame);
@@ -315,6 +275,7 @@ done:
     delwin(messagebox);
     endwin();
     deinitItem(&head);
+    pthread_mutex_destroy(&lock);
 
     return NULL;
 }
@@ -328,6 +289,144 @@ updateBottomStatus(int r, int q, int ru)
     mvwprintw(statusBottom, 0, 0, "R: %d Q: %d RU: %d",
             stat.r, stat.q, stat.ru);
     wrefresh(statusBottom);
+}
+
+int
+executeCommand(int key, CommandCallbacks *cb)
+{
+    int rv = 0;
+    switch (key) {
+        case 'p':
+            isPaused ? cmdResume() : cmdPause();
+            if (cb->pause != NULL) {
+                cb->pause();
+            }
+            break;
+        case 'c':
+            cmdClrScr();
+            if (cb->clrscr != NULL) {
+                cb->clrscr();
+            }
+            break;
+        case 'r':
+            cmdRequestMode();
+            break;
+        case '\n':
+        case '\r':
+            cmdSendRequest();
+            if (cb->sendreq != NULL) {
+                cb->sendreq();
+            }
+            break;
+        case 'q':
+            rv = -1;
+            break;
+        case KEY_DOWN:
+            if (isPaused) {
+                selectItem(&current, next);
+            }
+            break;
+        case KEY_UP:
+            if (isPaused) {
+                selectItem(&current, prev);
+            }
+            break;
+        default:
+            break;
+    }
+
+    return rv;
+}
+
+/* static definitions */
+static int
+requestMode(int key)
+{
+    int rv = 0;
+    if ((key == KEY_BACKSPACE) || (key == 127) || (key == 8)) {
+        if (i > 0) {
+            i--;
+            requestbuf[i] = '\0';
+            wmove(query, 0, 9 + i);
+            waddch(query, ' ');
+            wmove(query, 0, 9 + i);
+            wrefresh(query);
+        }
+        goto out;
+    }
+    
+    if (key >= 32 && key <= 126) {
+        if (i < sizeof(requestbuf) - 1) {
+            requestbuf[i++] = (char)key;
+            requestbuf[i] = '\0';
+            waddch(query, key);
+            wrefresh(query);
+        }
+        goto out;
+    }
+
+    rv = -1;
+
+out:
+    return rv;
+}
+
+static void
+cmdSendRequest()
+{
+    curs_set(0);
+    requestbuf[i] = '\0';
+    isRequestMode = false;
+    werase(query);
+    wrefresh(query);
+}
+
+static void
+cmdRequestMode()
+{
+    i = 0;
+    isRequestMode = true;
+    memset(requestbuf, 0, BUFF_SZ);
+    curs_set(1);
+    werase(query);
+    wmove(query, 0, 0);
+    winsdelln(query, 1);
+    mvwprintw(query, 0, 0, "Request: ");
+    wrefresh(query);
+}
+
+static void
+cmdClrScr()
+{
+    werase(result);
+    wrefresh(result);
+    werase(messagebox);
+    wrefresh(messagebox);
+    deinitItem(&head);
+    initItem(&head);
+    current = NULL;
+}
+
+static void
+cmdPause()
+{
+    isPaused = true;
+    selectItem(&current, next);
+    werase(status);
+    mvwprintw(status, 0, 0,
+            "Status: %s", "Paused");
+    wrefresh(status);
+}
+
+static void
+cmdResume()
+{
+    isPaused = false;
+    selectItem(&current, deselect);
+    werase(status);
+    mvwprintw(status, 0, 0,
+            "Status: %s", "Running");
+    wrefresh(status);
 }
 
 static void

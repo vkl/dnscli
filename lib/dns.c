@@ -20,6 +20,8 @@ static bool parseIPv6AddrS(uint8_t *buffer, uint16_t *pos, char *ipv6Str,
         int maxLen);
 static int parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
         int *msgPos);
+static int parseNSEC(uint8_t *buffer, uint16_t *pos, uint16_t dataLength,
+        char *message, int *msgPos);
 static int parseResourceRecords(uint8_t *buffer, uint16_t *pos,
         DNSType type, int dataLength, char *message, int *msgPos);
 static int parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
@@ -267,6 +269,8 @@ parseResourceRecords(uint8_t *buffer, uint16_t *pos, DNSType type, int dataLengt
         lines += parseSRV(buffer, pos, message, msgPos);
         break;
     case NSEC:
+        lines += parseNSEC(buffer, pos, dataLength, message, msgPos);
+        break;
     default:
         *pos += dataLength;
         break;
@@ -296,36 +300,6 @@ parseReplies(uint8_t *buffer, int buflen, uint16_t *pos, uint16_t count,
         dataLength = ntohs(*(uint16_t*)&buffer[*pos]);
         *pos += 2;
 
-        if (strcmp(DNS_TYPE_TO_STRING(type), "UNKNOWN") == 0) {
-            // printToMessageBox("Unknown DNS type: %u\n\r", type);
-            // debug_dump(buffer, buflen, printToMessageBox);
-            // ret = -1;
-            // goto out;
-        }
-
-        if (strcmp(DNS_CLASS_TO_STRING(class), "UNKNOWN") == 0) {
-            // name[0] = 0;
-            // printToMessageBox("pos before: %d\n", tmp);
-            // parseDNSName(buffer, &tmp, name);
-            // printToMessageBox("Name: %s, pos: %u\n\r", name, tmp);
-            // uint16_t type =
-            //     ((uint16_t)buffer[tmp] << 8) |
-            //     buffer[tmp + 1];
-            // printToMessageBox("Type bytes: %02x %02x\n\r",
-            //                 buffer[tmp], buffer[tmp + 1]);
-            // tmp += 2;
-            // printToMessageBox("After type: pos=%u\n\r", tmp);
-            // uint16_t rawClass =
-            //     ((uint16_t)buffer[tmp] << 8) |
-            //     buffer[tmp + 1];
-            // printToMessageBox("Class bytes: %02x %02x\n\r",
-            //                 buffer[tmp], buffer[tmp + 1]);
-            // printToMessageBox("Raw class: 0x%04x\n\r", rawClass);
-            // debug_dump(buffer, buflen, printToMessageBox);
-            // ret = -1;
-            // goto out;
-        }
-
         addToMsg(message, msgPos,
                 "  %s  %s%s  TTL=%u %s\n\r",
                 label,
@@ -354,7 +328,28 @@ parseSRV(uint8_t *buffer, uint16_t *pos, char *message,
     if (parseDNSName(buffer, pos, target) < 0)
         return 0;
     addToMsg(message, msgPos, "       -> %u %u %u %s\n\r",
-            priority, weight, port, target);    
+            priority, weight, port, target);
+    return 1;
+}
+
+static int
+parseNSEC(uint8_t *buffer, uint16_t *pos, uint16_t dataLength,
+          char *message, int *msgPos)
+{
+    uint16_t start = *pos;
+    char next[MAX_DOMAIN_NAME] = {0};
+
+    if (parseDNSName(buffer, pos, next) < 0)
+        return 0;
+
+    if (*pos > start + dataLength)
+        return 0;
+
+    /* Skip the type bitmap for now. */
+    *pos = start + dataLength;
+
+    addToMsg(message, msgPos, "       -> next=%s\n\r",
+            next);
     return 1;
 }
 

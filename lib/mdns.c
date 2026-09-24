@@ -36,6 +36,18 @@ typedef struct {
     _Atomic size_t tail;
 } Ring;
 
+static void mdnsPauseResume(void);
+static void mdnsClear(void);
+static void mdnsSendReq(void);
+
+static CommandCallbacks callbacks = {
+    .pause = mdnsPauseResume,
+    .clrscr = mdnsClear,
+    .sendreq = mdnsSendReq
+};
+
+static struct pollfd fds[2];
+
 static int
 init_ring(Ring *ring)
 {
@@ -108,11 +120,11 @@ monitor(void *arg)
     struct sockaddr_in server_addr;
     struct sockaddr_in local_addr, sender_addr;
     ssize_t n = 0;
-    struct pollfd fds[2];
     struct sockaddr_in src_addr;
     socklen_t addr_len = sizeof(src_addr);
     char src_ip[INET_ADDRSTRLEN];
     Ring ring;
+    uint64_t control = 0;
     int *ret = malloc(sizeof(int));
     *ret = -1;
 
@@ -175,14 +187,12 @@ monitor(void *arg)
                 pkt->len = n;
                 ring_produce(&ring);
                 pktConsumer = ring_consumer_slot(&ring);
+                ring_consume(&ring);
                 if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
                         printToWindow,
                         (struct sockaddr*)&src_addr) < 0) {
                     goto done;
                 }
-                uint16_t flags = ((uint16_t)pktConsumer->data[0] << 8) | pktConsumer->data[1];
-                updateBottomStatus(!IS_QUERY(flags), IS_QUERY(flags), 1);
-                ring_consume(&ring);
             }
         }
 
@@ -207,27 +217,10 @@ monitor(void *arg)
 
         // signal from user
         if (fds[1].revents & POLLIN) {
-            uint64_t signal = 0;
-            read(efd, &signal, sizeof(signal));
-            switch (signal) {
-                case (char)'q':
-                    goto done;
-                    break;
-                case (char)'r':
-                    fds[0].events |= POLLOUT;
-                    break;
-                case (char)'p':
-                    if (fds[0].events & POLLIN) {
-                        fds[0].events &= ~POLLIN;
-                    } else {
-                        fds[0].events |= POLLIN;
-                    }
-                    break;
-                case (char)'c':
-                    break;
-                default:
-                    fprintf(stderr, "Unknown signal\n\r");
-                    break;
+            control = 0;
+            read(efd, &control, sizeof(control));
+            if (executeCommand((int)control, &callbacks) < 0) {
+                goto done;
             }
         }
     }
@@ -270,4 +263,26 @@ startMonitor(enum monitorType monType)
         pthread_cancel(interactive_id);
     }
     pthread_join(interactive_id, (void*)&ret);
+}
+
+static void
+mdnsPauseResume(void)
+{
+    if (fds[0].events & POLLIN) {
+        fds[0].events &= ~POLLIN;
+    } else {
+        fds[0].events |= POLLIN;
+    }
+}
+
+static void
+mdnsClear(void)
+{
+    
+}
+
+static void
+mdnsSendReq(void)
+{
+    fds[0].events |= POLLOUT;
 }

@@ -4,13 +4,26 @@
 #include <curses.h>
 #include <stdint.h>
 
-// #include "dns.h"
+enum Event {
+    None,
+    Pause,
+    Resume
+};
+
+typedef void (*command) ();
+typedef void (*callback)(void);
+
+typedef struct {
+    callback pause;
+    callback clrscr;
+    callback sendreq;
+} CommandCallbacks;
 
 void *interactive(void *arg);
 int printToWindow(const char *msg, int lines, uint8_t *rawPacket, size_t len);
 int printToMessageBox(const char *format, ...);
 void updateBottomStatus(int r, int q, int ru);
-// void printDnsPacket(DNSPacket *dnsPacket, printTerminal printTerminal);
+int executeCommand(int key, CommandCallbacks *cb);
 
 #endif
 
