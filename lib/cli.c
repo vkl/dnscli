@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <stdatomic.h>
 #include <signal.h>
 
 #include <ncurses.h>
@@ -223,9 +224,7 @@ interactive(void *arg)
     sigemptyset(&action.sa_mask);
     sigaction(SIGWINCH, &action, NULL);
 
-    // updateBottomStatus(10, 10, 10);
-
-    for (;;) {
+    while (true) {
 
         if (terminal_resized) {
             terminal_resized = 0;
@@ -244,29 +243,15 @@ interactive(void *arg)
             continue;
         }
 
-        switch (key) {
-            case 'a':
-            case 'p': // pause/resume
-            case 'c': // clear screen
-            case 'r': // enter request mode
-            case KEY_DOWN:
-            case KEY_UP:
-                control = (uint64_t)key;
-                write(efd, &control, sizeof(control));
-                break;
-            case 'q': // quit
-                goto done;
-                break;
-            default:
-                break;
-        }
+        control = (uint64_t)key;
+        write(efd, &control, sizeof(control));
 
+        if (key == 'q') {
+            break;
+        }
     }
 
 done:
-    control = (uint64_t)key;
-    write(efd, &control, sizeof(control));
-
     delwin(result);
     delwin(result_frame);
     delwin(query);
