@@ -14,6 +14,7 @@
 
 #include "cli.h"
 #include "dns.h"
+#include "mdns.h"
 // #include "dns.h"
 
 #define BUFF_SZ 1024
@@ -124,7 +125,6 @@ printToWindow(const char *msg, int lines,
     n = mvwprintw(result, 0, 0, "%s", msg);
     wrefresh(result);
     addItem(rawPacket, len, lines);
-    debugItems();
     return n;
 }
 
@@ -235,11 +235,7 @@ interactive(void *arg)
 
         key = wgetch(query);
 
-        if (isRequestMode) {
-            if (requestMode(key) < 0) {
-                control = (uint64_t)key;
-                write(efd, &control, sizeof(control));
-            }
+        if (isRequestMode && (requestMode(key) >= 0)) {
             continue;
         }
 
@@ -270,7 +266,8 @@ updateBottomStatus(int r, int q, int ru)
 {
     stat.q += q;
     stat.r += r;
-    stat.ru += ru;
+    stat.ru = ru;
+    wclear(statusBottom);
     mvwprintw(statusBottom, 0, 0, "R: %d Q: %d RU: %d",
             stat.r, stat.q, stat.ru);
     wrefresh(statusBottom);

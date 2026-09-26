@@ -3,7 +3,7 @@ set(CURSES_NEED_WIDE TRUE)
 
 find_package(Curses REQUIRED)
 
-add_library(dns dns.c dns_packet.c udp.c mdns.c cli.c)
+add_library(dns dns.c dns_packet.c udp.c mdns.c cli.c ring.c)
 
 target_link_libraries(dns PRIVATE ncurses)
 target_compile_definitions(dns PRIVATE)

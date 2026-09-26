@@ -16,6 +16,7 @@
 #include "dns_packet.h"
 #include "mdns.h"
 #include "cli.h"
+#include "ring.h"
 
 int efd;
 
@@ -24,17 +25,6 @@ int efd;
 #define PKT_SZ 2048
 
 extern uint8_t requestbuf[BUFF_SZ];
-
-typedef struct {
-    uint8_t data[PKT_SZ];
-    size_t len;
-} Packet;
-
-typedef struct {
-    Packet items[RING_SZ];
-    _Atomic size_t head;
-    _Atomic size_t tail;
-} Ring;
 
 static void mdnsPauseResume(void);
 static void mdnsClear(void);
@@ -47,63 +37,7 @@ static CommandCallbacks callbacks = {
 };
 
 static struct pollfd fds[2];
-
-static int
-init_ring(Ring *ring)
-{
-    int ret = -1;
-    ring->head = 0;
-    ring->tail = 0;
-    ret = 0;
-
-out:
-    return ret;
-}
-
-static Packet*
-ring_producer_slot(Ring *ring)
-{
-    size_t head = atomic_load_explicit(&ring->head,
-            memory_order_relaxed);
-    size_t next = (head + 1) % RING_SZ;
-    size_t tail = atomic_load_explicit(
-            &ring->tail, memory_order_acquire);
-    if (next == tail)
-        return NULL;       // full
-    return &ring->items[head];
-}
-
-static void
-ring_produce(Ring *ring)
-{
-    size_t head = atomic_load_explicit(&ring->head,
-                                       memory_order_relaxed);
-    size_t next = (head + 1) % RING_SZ;
-    atomic_store_explicit(&ring->head,
-                          next,
-                          memory_order_release);
-}
-
-static Packet*
-ring_consumer_slot(Ring *ring)
-{
-    size_t tail = atomic_load_explicit(&ring->tail,
-            memory_order_relaxed);
-    size_t head = atomic_load_explicit(&ring->head,
-            memory_order_acquire);
-    if (tail == head)
-        return NULL;       // empty
-    return &ring->items[tail];
-}
-
-static void
-ring_consume(Ring *ring)
-{
-    size_t tail = atomic_load_explicit(&ring->tail,
-            memory_order_relaxed);
-    size_t next = (tail + 1) % RING_SZ;
-    atomic_store_explicit(&ring->tail, next, memory_order_release);
-}
+static Ring ring;
 
 static void *
 monitor(void *arg) 
@@ -123,12 +57,11 @@ monitor(void *arg)
     struct sockaddr_in src_addr;
     socklen_t addr_len = sizeof(src_addr);
     char src_ip[INET_ADDRSTRLEN];
-    Ring ring;
     uint64_t control = 0;
     int *ret = malloc(sizeof(int));
     *ret = -1;
 
-    if (init_ring(&ring) < 0) {
+    if (init_ring(&ring, sizeof(Packet), RING_SZ) < 0) {
         fprintf(stderr, "Failed to initialize ring buffer\n");
         goto out;
     }
@@ -171,11 +104,21 @@ monitor(void *arg)
     fds[1].events = POLLIN;
     
     for (;;) {
-        int ret = poll(fds, 2, 5000);
+        int ret = poll(fds, 2, 100);
         if (ret == -1) {
             perror("poll");
             goto out;
         } else if (ret == 0) {
+            pktConsumer = ring_consumer_slot(&ring);
+            if (pktConsumer == NULL) {
+                continue;
+            }
+            ring_consume(&ring);
+            if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
+                    printToWindow,
+                    (struct sockaddr*)&src_addr) < 0) {
+                goto done;
+            }
             continue;
         }
 
@@ -186,13 +129,14 @@ monitor(void *arg)
             if (n > 0) {
                 pkt->len = n;
                 ring_produce(&ring);
-                pktConsumer = ring_consumer_slot(&ring);
-                ring_consume(&ring);
-                if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
-                        printToWindow,
-                        (struct sockaddr*)&src_addr) < 0) {
-                    goto done;
-                }
+                // pktConsumer = ring_consumer_slot(&ring);
+                // ring_consume(&ring);
+                // if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
+                //         ring_get_head(&ring),
+                //         printToWindow,
+                //         (struct sockaddr*)&src_addr) < 0) {
+                //     goto done;
+                // }
             }
         }
 
@@ -228,6 +172,7 @@ monitor(void *arg)
 done:
     close(fd);
     *ret = 0;
+    deinit_ring(&ring);
 
 out:
     return (void*)ret;
