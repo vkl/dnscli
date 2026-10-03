@@ -16,3 +16,11 @@ cd ./build/Release
 cmake -DCMAKE_BUILD_TYPE=Release ../..
 cmake --build .
 ```
+
+```
+cmake -DCMAKE_PREFIX_PATH=/opt \
+      -DCMAKE_INCLUDE_PATH=/opt/include \
+      -DCMAKE_LIBRARY_PATH=/opt/lib \
+      -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,/opt/lib -L/opt/lib" \
+      ../..
+```

@@ -1,10 +1,11 @@
 #ifndef _DNS_H
 #define _DNS_H
 
-#include <arpa/inet.h>
-
 #include <stdint.h>
 #include <string.h>
+#include <arpa/inet.h>
+
+#include <curses.h>
 
 #define HEADER_SZ 12
 #define MAX_LABEL 63
@@ -12,53 +13,17 @@
 #define MAX_IPV4_ADDR 16
 #define MAX_IPV6_ADDR INET6_ADDRSTRLEN
 
-// DNS Header structure
-typedef struct {
-    uint16_t transactionID;    // Transaction ID
-    uint16_t flags;            // Flags and Code
-    uint16_t questionCount;    // Number of Questions
-    uint16_t answerCount;      // Number of Answer RRs
-    uint16_t authorityCount;   // Number of Authority RRs
-    uint16_t additionalCount;  // Number of Additional RRs
-} __attribute__((packed)) DNSHeader;
-
-// DNS Question structure
-typedef struct {
-    char *name;                // Domain name (not typically fixed size, might need to use a dynamic array)
-    uint16_t type;             // Type of query
-    uint16_t class;            // Class of query
-} DNSQuestion;
-
-// DNS Resource Record (RR) structure
-typedef struct {
-    char *name;                // Domain name (not typically fixed size)
-    uint16_t type;             // Type of record
-    uint16_t class;            // Class of record
-    uint32_t ttl;              // Time to Live
-    uint16_t dataLength;       // Length of RDATA
-    char *data;                // RDATA (variable length)
-} __attribute__((packed)) DNSResourceRecord;
-
-// DNS Packet structure
-typedef struct {
-    DNSHeader header;          // DNS Header
-    DNSQuestion *questions;    // Array of DNS Questions
-    DNSResourceRecord *answers; // Array of DNS Answers
-    DNSResourceRecord *authorities; // Array of DNS Authorities
-    DNSResourceRecord *additionals; // Array of DNS Additional Records
-} DNSPacket;
-
 typedef enum DNSType {
-    A = 1,      // a host address
-    NS = 2,     //an authoritative name server
-    MD = 3,     // a mail destination (Obsolete - use MX)
-    MF = 4,     // a mail forwarder (Obsolete - use MX)
-    CNAME = 5,  // the canonical name for an alias
-    SOA = 6,    // marks the start of a zone of authority
-    PTR = 12,   // a domain name pointer
-    HINFO = 13, // host information
-    MINFO = 14, // mailbox or mail list information
-    MX = 15,    // mail exchange
+    A = 1,       // a host address
+    NS = 2,      // an authoritative name server
+    MD = 3,      // a mail destination (Obsolete - use MX)
+    MF = 4,      // a mail forwarder (Obsolete - use MX)
+    CNAME = 5,   // the canonical name for an alias
+    SOA = 6,     // marks the start of a zone of authority
+    PTR = 12,    // a domain name pointer
+    HINFO = 13,  // host information
+    MINFO = 14,  // mailbox or mail list information
+    MX = 15,     // mail exchange
     TXT = 16,    // text strings
     AAAA = 28,   // a ipv6 host address
     SRV = 33,    // server selection
@@ -77,6 +42,10 @@ typedef enum DNSClass {
     HS = 4      // Hesiod [Dyer 87]
 } DNSClass;
 
+typedef int (*printTerminal)(const char *msg, int lines,
+        uint8_t *rawPacket, size_t len);
+typedef int (*outputFunc)(const char *, ...);
+
 #define STR_TO_DNS_TYPE(s) \
     strcmp("A", s) == 0 ? A : \
     strcmp("NS", s) == 0 ? NS :\
@@ -92,28 +61,30 @@ typedef enum DNSClass {
     strcmp("AAAA", s) == 0 ? AAAA :\
     strcmp("SRV", s) == 0 ? SRV :\
     strcmp("OPT", s) == 0 ? OPT :\
+    strcmp("NSEC", s) == 0 ? NSEC :\
     strcmp("IXFR", s) == 0 ? IXFR :\
     strcmp("AXFR", s) == 0 ? AXFR :\
     strcmp("ANY", s) == 0 ? ANY : -1
 
 #define DNS_TYPE_TO_STRING(type) \
-    ((type) == A ? "A" : \
-    (type) == NS ? "NS" : \
-    (type) == MD ? "MD" : \
-    (type) == MF ? "MF" : \
-    (type) == CNAME ? "CNAME" : \
-    (type) == SOA ? "SOA" : \
-    (type) == PTR ? "PTR" : \
-    (type) == HINFO ? "HINFO" : \
-    (type) == MINFO ? "MINFO" : \
-    (type) == MX ? "MX" : \
-    (type) == TXT ? "TXT" : \
-    (type) == AAAA ? "AAAA" : \
-    (type) == SRV ? "SRV" : \
-    (type) == OPT ? "OPT" : \
-    (type) == IXFR ? "IXFR" : \
-    (type) == AXFR ? "AXFR" : \
-    (type) == ANY ? "ANY" : "UNKNOWN")
+    ((type) == A ?    "A     " : \
+    (type) == NS ?    "NS    " : \
+    (type) == MD ?    "MD    " : \
+    (type) == MF ?    "MF    " : \
+    (type) == CNAME ? "CNAME " : \
+    (type) == SOA ?   "SOA   " : \
+    (type) == PTR ?   "PTR   " : \
+    (type) == HINFO ? "HINFO " : \
+    (type) == MINFO ? "MINFO " : \
+    (type) == MX ?    "MX    " : \
+    (type) == TXT ?   "TXT   " : \
+    (type) == AAAA ?  "AAAA  " : \
+    (type) == SRV ?   "SRV   " : \
+    (type) == OPT ?   "OPT   " : \
+    (type) == NSEC ?  "NSEC  " : \
+    (type) == IXFR ?  "IXFR  " : \
+    (type) == AXFR ?  "AXFR  " : \
+    (type) == ANY ?   "ANY   " : "TYPE? ")
 
 #define DNS_CLASS_TO_STRING(class) \
     (((class) & 0x7FFF) == 0x0001 ? "IN" : \
@@ -128,7 +99,7 @@ typedef enum DNSClass {
 do {                                       \
     int cnt = 0;                           \
     for (int i=0; i<(n); i++) {            \
-        printf("%02x ",                    \
+        fprintf(stderr, "%02x ",           \
                 (unsigned char)(buf)[i]);  \
         cnt++;                             \
         if (cnt % 8 == 0) printf(" ");     \
@@ -174,25 +145,10 @@ do {                                     \
     }                                    \
 } while(0)
 
-DNSPacket *createDNSPacket();
-void freeDNSPacket(DNSPacket **dnsPacket);
-void buildDNSPacket(DNSPacket *dnsPacket, uint8_t *buffer, uint16_t *buflen);
 void buildDnsQuery(const char *name, DNSType dnsType, uint8_t **buffer, int *buflen);
-int parseDnsResponse(uint8_t *buf, int buflen);
-int parseIPv6Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-int parseIPv4Addr(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-int parseOPTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-int parseSRVRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
-int parseTXTRR(uint8_t *buffer, uint16_t *pos, DNSResourceRecord *dnsResourceRecord);
 int parseDNSName(uint8_t *buf, uint16_t *pos, char *name);
-int parseDnsPacket(DNSPacket *dnsPacket, uint8_t *buf, int n);
-
-int parseDNSPacketQueries(DNSQuestion *dnsQuestions,
-        uint16_t cnt, uint8_t *buf, uint16_t *pos);
-
-int parseDNSPacketResourceRecords(DNSResourceRecord *dnsResourceRecords,
-        uint16_t cnt, uint8_t *buf, uint16_t *pos);
-
-void printDnsPacket(DNSPacket *dnsPacket);
+int printRawDnsPacket(uint8_t *buffer, int buflen, printTerminal printer,
+        struct sockaddr *src_addr);
+void debug_dump(uint8_t *buf, int n, outputFunc output);
 
 #endif

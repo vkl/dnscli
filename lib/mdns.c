@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
-#include <time.h>
 #include <string.h>
 #include <poll.h>
 #include <sys/types.h>
@@ -10,33 +9,74 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 
 #include "dns.h"
+#include "dns_packet.h"
 #include "mdns.h"
 #include "cli.h"
+#include "ring.h"
 
 int efd;
+
+#define BUFF_SZ 1024
+#define RING_SZ 128
+#define PKT_SZ 2048
+
+extern uint8_t requestbuf[BUFF_SZ];
+
+static void mdnsPauseResume(void);
+static void mdnsClear(void);
+static void mdnsSendReq(void);
+
+static CommandCallbacks callbacks = {
+    .pause = mdnsPauseResume,
+    .clrscr = mdnsClear,
+    .sendreq = mdnsSendReq
+};
+
+static struct pollfd fds[2];
+static Ring ring;
 
 static void *
 monitor(void *arg) 
 {
     enum monitorType monType = *((enum monitorType*)arg);
-    DNSPacket *dnsPacket;
-    uint8_t sendbuf[512] = {0};
+    uint8_t sendbuf[BUFF_SZ] = {0};
+    uint8_t receivebuf[BUFF_SZ] = {0};
     uint16_t buflen = 0;
-    
+    DNSPacket *dnsPacketRequest;
+    DNSPacket *dnsPacket = NULL;
+    Packet *pkt = NULL;
+    Packet *pktConsumer = NULL;
+    struct ip_mreq mreq;
+    struct sockaddr_in server_addr;
+    struct sockaddr_in local_addr, sender_addr;
+    ssize_t n = 0;
+    struct sockaddr_in src_addr;
+    socklen_t addr_len = sizeof(src_addr);
+    char src_ip[INET_ADDRSTRLEN];
+    uint64_t control = 0;
+    int *ret = malloc(sizeof(int));
+    *ret = -1;
+
+    if (init_ring(&ring, sizeof(Packet), RING_SZ) < 0) {
+        fprintf(stderr, "Failed to initialize ring buffer\n");
+        goto out;
+    }
+
     int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
     if (fd == -1) {
         perror("socket");
-        return NULL;
+        goto out;
     }
-    struct sockaddr_in server_addr;
+
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(MDNS_PORT);  // Server's port
     server_addr.sin_addr.s_addr = inet_addr(MDNS_GROUP);
 
-    struct sockaddr_in local_addr, sender_addr;
     memset(&local_addr, 0, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = htonl(INADDR_ANY); // Bind to all interfaces
@@ -46,25 +86,17 @@ monitor(void *arg)
     if (bind(fd, (struct sockaddr*)&local_addr, sizeof(local_addr)) < 0) {
         perror("Bind failed");
         close(fd);
-        return NULL;
+        goto out;
     }
 
-    struct ip_mreq mreq;
     mreq.imr_multiaddr.s_addr = inet_addr(MDNS_GROUP);
     mreq.imr_interface.s_addr = INADDR_ANY;
     
     if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&mreq, sizeof(mreq)) < 0) {
         perror("setsockopt failed");
-        return NULL;
+        goto out;
     }
     
-    uint8_t *buf = calloc(1, 1024);
-    ssize_t n = 0;
-    struct pollfd fds[2];
-    struct sockaddr_in src_addr;
-    char src_ip[INET_ADDRSTRLEN];
-    socklen_t addr_len = sizeof(src_addr);
-
     fds[0].fd = fd;
     fds[0].events = POLLIN;
 
@@ -72,82 +104,86 @@ monitor(void *arg)
     fds[1].events = POLLIN;
     
     for (;;) {
-        int ret = poll(fds, 2, 5000);
+        int ret = poll(fds, 2, 100);
         if (ret == -1) {
             perror("poll");
-            return NULL;
+            goto out;
         } else if (ret == 0) {
-            //printf("Timeout occurred! No events.\n\r");
+            pktConsumer = ring_consumer_slot(&ring);
+            if (pktConsumer == NULL) {
+                continue;
+            }
+            ring_consume(&ring);
+            if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
+                    printToWindow,
+                    (struct sockaddr*)&src_addr) < 0) {
+                goto done;
+            }
             continue;
         }
+
         // read data
         if (fds[0].revents & POLLIN) {
-            n = recvfrom(fd, buf, 1024, 0, (struct sockaddr*)&src_addr, &addr_len);
+            pkt = ring_producer_slot(&ring);
+            n = recvfrom(fd, pkt->data, sizeof(pkt->data), 0, (struct sockaddr*)&src_addr, &addr_len);
             if (n > 0) {
-                inet_ntop(AF_INET, &src_addr.sin_addr, src_ip, sizeof(src_ip));
-#ifdef DEBUG_TRACE
-                printf("Received %zd bytes from %s:%d\n\r", n, src_ip, ntohs(src_addr.sin_port));
-#endif
-                DNSPacket *dnsPacket = createDNSPacket();
-                if (parseDnsPacket(dnsPacket, buf, n) < 0) {
-                    fprintf(stderr, "error parse DNS packet\n\r");
-                    DEBUG_DUMP(buf, n);
-                } else {
-                    DEBUG_DUMP(buf, n);
-                    if (monType == ALL) {
-                        printDnsPacket(dnsPacket);
-                    } else if (monType == QUERY && IS_QUERY(dnsPacket->header.flags)) {
-                        printDnsPacket(dnsPacket);   
-                    } else if (monType == REQUEST && !IS_QUERY(dnsPacket->header.flags)) {
-                        printDnsPacket(dnsPacket); 
-                    }
-                }
-                freeDNSPacket(&dnsPacket);
-            }    
+                pkt->len = n;
+                ring_produce(&ring);
+                // pktConsumer = ring_consumer_slot(&ring);
+                // ring_consume(&ring);
+                // if (printRawDnsPacket(pktConsumer->data, pktConsumer->len,
+                //         ring_get_head(&ring),
+                //         printToWindow,
+                //         (struct sockaddr*)&src_addr) < 0) {
+                //     goto done;
+                // }
+            }
         }
+
         // write data
         if (fds[0].revents & POLLOUT) {
-            //printf("sending packet.....\n\r");
-            dnsPacket = calloc(1, sizeof(DNSPacket));
-            dnsPacket->header.questionCount = 1;
-            dnsPacket->header.transactionID = 0x0000;
-            dnsPacket->questions = calloc(1, sizeof(DNSQuestion));
-            dnsPacket->questions[0].type = PTR;
-            dnsPacket->questions[0].class = IN;
-            dnsPacket->questions[0].name = strdup("_googlecast._tcp.local");
-            buildDNSPacket(dnsPacket, sendbuf, &buflen);
+            dnsPacketRequest = createDNSPacket();
+            dnsPacketRequest->header.questionCount = 1;
+            dnsPacketRequest->header.transactionID = 0x0000;
+            dnsPacketRequest->questions = calloc(1, sizeof(DNSQuestion));
+            dnsPacketRequest->questions[0].type = PTR;
+            dnsPacketRequest->questions[0].class = IN;
+            dnsPacketRequest->questions[0].name = (char *)strdup((char *)requestbuf);
+            buildDNSPacket(dnsPacketRequest, sendbuf, &buflen);
 
-            if (sendto(fd, sendbuf, buflen, 0, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            if (sendto(fd, sendbuf, buflen, 0, (struct sockaddr*)&server_addr,
+                    sizeof(server_addr)) < 0) {
                 perror("sendto failed\n\r");
             }
-            freeDNSPacket(&dnsPacket);
+            freeDNSPacket(&dnsPacketRequest);
             fds[0].events &= ~POLLOUT;
         }
+
         // signal from user
         if (fds[1].revents & POLLIN) {
-            uint64_t signal = 0;
-            read(efd, &signal, sizeof(signal));
-            switch (signal) {
-                case (char)'q':
-                    goto done;
-                    break;
-                case (char)'r':
-                    fds[0].events |= POLLOUT;
-                    break;
-            } 
+            control = 0;
+            read(efd, &control, sizeof(control));
+            if (executeCommand((int)control, &callbacks) < 0) {
+                goto done;
+            }
         }
     }
 
 done:
     close(fd);
-    free(buf);
-    return NULL;
+    *ret = 0;
+    deinit_ring(&ring);
+
+out:
+    return (void*)ret;
 }
 
 void 
-startMonitor(parseMsg __parseFunc, enum monitorType monType) 
+startMonitor(enum monitorType monType)
 {
     int rc;
+    int status;
+    int *ret = malloc(sizeof(int));
     
     efd = eventfd(0, 0);
     if (efd == -1) {
@@ -160,7 +196,38 @@ startMonitor(parseMsg __parseFunc, enum monitorType monType)
     pthread_create(&monitor_id, NULL, monitor, (void*)&monType);
     pthread_create(&interactive_id, NULL, interactive, NULL);
 
-    pthread_join(monitor_id, NULL);
-    pthread_join(interactive_id, NULL);
+    pthread_join(monitor_id, (void*)&ret);
+
+    if (ret != NULL) {
+        status = *ret;
+        free(ret);
+    }
+
+    if (status < 0) {
+        fprintf(stderr, "monitor thread error\n\r");
+        pthread_cancel(interactive_id);
+    }
+    pthread_join(interactive_id, (void*)&ret);
 }
 
+static void
+mdnsPauseResume(void)
+{
+    if (fds[0].events & POLLIN) {
+        fds[0].events &= ~POLLIN;
+    } else {
+        fds[0].events |= POLLIN;
+    }
+}
+
+static void
+mdnsClear(void)
+{
+    
+}
+
+static void
+mdnsSendReq(void)
+{
+    fds[0].events |= POLLOUT;
+}

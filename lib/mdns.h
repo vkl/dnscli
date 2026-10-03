@@ -7,6 +7,7 @@
 
 #define MDNS_PORT 5353
 #define MDNS_GROUP "224.0.0.251"
+#define PKT_SZ 2048
 
 enum monitorType {
     ALL,
@@ -14,7 +15,12 @@ enum monitorType {
     REQUEST
 };
 
-void startMonitor(parseMsg __parseFunc, enum monitorType monType);
+typedef struct {
+    uint8_t data[PKT_SZ];
+    size_t len;
+} Packet;
+
+void startMonitor(enum monitorType monType);
 
 #endif
 

@@ -14,6 +14,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+add_compile_definitions(DEBUG_TRACE)
+
 set(CMAKE_C_FLAGS_DEBUG
     "${CMAKE_C_FLAGS_DEBUG} -O0 -g3 -fno-omit-frame-pointer"
 )
@@ -31,6 +33,7 @@ add_executable(dnscli
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c")
 
 find_package(Threads REQUIRED)
+
 target_link_libraries(dnscli PRIVATE Threads::Threads dns)
 
 set_target_properties(dnscli
